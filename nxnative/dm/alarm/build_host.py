@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
-# build_host.py: build the upstream host core natively for aarch64 Linux/glibc (the nx2alarm-host binary).
+# build_host.py: build the upstream host core natively for aarch64 Linux/glibc (the nx2alarm-host binaries).
 #
-# Sources are the upstream host core (dm/host, dm/gfx, dm/gfx/nvn, dm/gfx/tex, the null graphics backend dm/android/gfx_null.c +
-# gfx_common.c) plus the Darwin-compat shims the Android port added, the Linux platform layer of dm/alarm (weak stubs, the ELF
-# registration table, this directory's platform/ implementations) and the third-party decoders the host needs. The Apple-only
-# files (hle_table.c's Mach-O section, hle_movie_avc.c's VideoToolbox, front_mac.m / nvn_mtl.m and every other .m) are not built.
+# Sources are the upstream host core (dm/host, dm/gfx, dm/gfx/nvn, dm/gfx/tex, one graphics backend from dm/android) plus the
+# Darwin-compat shims the Android port added, the Linux platform layer of dm/alarm (weak stubs, the ELF registration table, this
+# directory's platform/ implementations) and the third-party decoders the host needs. The Apple-only files (hle_table.c's Mach-O
+# section, hle_movie_avc.c's VideoToolbox, front_mac.m / nvn_mtl.m and every other .m) are not built.
 #
-# Usage: python3 nxnative/dm/alarm/build_host.py [--debug] [--clean] [--game <title ID>] [-j N]
-#   The output binary is build/alarm/nx2alarm-host; the generated profile header and the objects live under build/alarm/host/.
-#   A game profile is required only to compile the host (its constants are compiled in); M1 does not boot a game, so the default
-#   is an existing profile.
+# Two graphics backends, one binary each (--gfx, as dm/android/build.py's a.gfx):
+#   --gfx null (default)  dm/android/gfx_null.c + gfx_common.c           -> build/alarm/nx2alarm-host
+#   --gfx vk              dm/android/gfx_vk_{core,present,exec,tex,shader,dq,subgroup}.c + gfx_common.c
+#                         + dm/alarm/gfx_vk_alarm.c (SDL3 window/VkSurfaceKHR) -> build/alarm/nx2alarm-host-vk
+#   The null build is the M1 acceptance binary and its sources, flags, objects and output are unchanged by the vk mode. The vk
+#   backend dlopens libvulkan.so.1 itself (gfx_vk_core.c, DM_ALARM), so neither binary has a libvulkan NEEDED entry.
+#
+# Usage: python3 nxnative/dm/alarm/build_host.py [--gfx {null,vk}] [--debug] [--clean] [--game <title ID>] [-j N]
+#   The output binary is build/alarm/nx2alarm-host (null) or build/alarm/nx2alarm-host-vk (vk); the generated headers and the
+#   objects live under build/alarm/host/ (null) or build/alarm/host-vk/ (vk). A game profile is required only to compile the
+#   host (its constants are compiled in); M1 does not boot a game, so the default is an existing profile.
+#   --gfx vk also generates android_profile.h and the backend's shader SPIR-V headers with the system glslc.
 import argparse
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -23,30 +32,40 @@ HERE = Path(__file__).resolve().parent            # nxnative/dm/alarm
 DM = HERE.parent                                  # nxnative/dm
 NX = DM.parent                                    # nxnative
 ROOT = NX.parent                                  # repository root
-OUT = ROOT / 'build' / 'alarm' / 'host'
-OBJ = OUT / 'obj'
-ASM = OUT / 'asm'
-BIN = ROOT / 'build' / 'alarm' / 'nx2alarm-host'
+BASE = ROOT / 'build' / 'alarm'
 DEFAULT_GAME = '0100152000022000'                 # Mario Kart 8 Deluxe: a profile that exists; M1 only compiles its constants in
+
+# The graphics backend source sets (dm/android/build.py has the same split for the Android build). Exactly one goes into a binary.
+VK_SOURCES = ['gfx_vk_core.c', 'gfx_vk_present.c', 'gfx_vk_exec.c', 'gfx_vk_tex.c', 'gfx_vk_shader.c', 'gfx_vk_dq.c', 'gfx_vk_subgroup.c']
+SHADERS = DM / 'android/shaders'                  # the backend's own small shaders: glslc -> gen/<name>_<stage>.spv.h
 
 # Upstream warning set (dm/host/Makefile: -O1 -g -Wall -Wno-unused-function) at -O2 for a release-like binary.
 CFLAGS = ['-O2', '-g', '-fPIC', '-Wall', '-Wno-unused-function',
           '-DDM_ALARM=1', '-D_GNU_SOURCE',
           '-include', str(DM / 'android/compat/include/darwin_compat.h')]
-# Include order: compat shims first (they replace Darwin headers), then the upstream include dirs of dm/host/Makefile + the Android port.
-INCLUDES = [
-    DM / 'android/compat/include',
-    DM / 'host',
-    DM / 'gfx/nvn',
-    DM / 'gfx/nvn/include',
-    DM / 'gfx/tex',
-    DM / 'android',
-    DM / 'third_party/vulkan-headers/include',
-    DM / 'third_party/stb_vorbis',
-    DM / 'third_party/zstd',
-    DM / 'third_party/libvpx',
-    DM / 'third_party/libvpx/config',
-]
+
+
+def include_dirs(gfx):
+    """Include order: compat shims first (they replace Darwin headers), then the upstream include dirs of dm/host/Makefile + the Android port.
+    For the Vulkan backend dm/alarm/compat comes before the repository's Vulkan headers: it supplies the missing vulkan/vulkan.h umbrella and
+    the Android shims (hardware_buffer.h / native_window.h) that the backend includes."""
+    inc = [DM / 'android/compat/include']
+    if gfx == 'vk':
+        inc += [HERE / 'compat', HERE / 'compat/include']
+    inc += [DM / 'host', DM / 'gfx/nvn', DM / 'gfx/nvn/include', DM / 'gfx/tex', DM / 'android']
+    if gfx == 'vk':
+        inc += [DM / 'android/shaders']
+    inc += [DM / 'third_party/vulkan-headers/include', DM / 'third_party/stb_vorbis', DM / 'third_party/zstd',
+            DM / 'third_party/libvpx', DM / 'third_party/libvpx/config']
+    return inc
+
+
+def output_paths(gfx):
+    """(build dir, object dir, asm dir, binary) for a graphics backend. The null paths are the M1 ones and must not change."""
+    out = BASE / ('host' if gfx == 'null' else 'host-vk')
+    return out, out / 'obj', out / 'asm', BASE / ('nx2alarm-host' if gfx == 'null' else 'nx2alarm-host-vk')
+
+
 LIBS = ['-lSDL3', '-lpthread', '-ldl', '-lm', '-lz']
 ASM_CONVERTER = DM / 'android/tools/darwin2elf.py'
 # Third-party C is built with its own flags, as dm/host/Makefile does for libvpx (clang -O2 -g -I<vpx> -I<vpx>/config): the
@@ -83,22 +102,25 @@ def run(cmd, cwd=None, quiet=False):
     return subprocess.run([str(c) for c in cmd], cwd=str(cwd) if cwd else None)
 
 
-def source_set():
-    """(C sources, assembly sources) of the host build; every entry is a Path."""
+def source_set(gfx):
+    """(C sources, assembly sources) of the host build for one graphics backend; every entry is a Path."""
     c = []
     # Host core: everything but the two files the port replaces (Apple-only section / VideoToolbox)
     skip_host = {'hle_table.c', 'hle_movie_avc.c'}
     c += sorted(p for p in (DM / 'host').glob('*.c') if p.name not in skip_host)
-    # Graphics replay (NVN) + the null backend and the shared backend diagnostics
+    # Graphics replay (NVN) + exactly one graphics backend (gfx_common.c is shared by both)
     c += sorted((DM / 'gfx').glob('*.c'))
     c += sorted((DM / 'gfx/nvn').glob('*.c'))
     c += sorted((DM / 'gfx/tex').glob('*.c'))
-    c += [DM / 'android/gfx_null.c', DM / 'android/gfx_common.c']
+    if gfx == 'vk':
+        c += [DM / 'android/gfx_common.c'] + [DM / 'android' / n for n in VK_SOURCES] + [HERE / 'gfx_vk_alarm.c']
+    else:
+        c += [DM / 'android/gfx_null.c', DM / 'android/gfx_common.c']
     # Darwin-compat shims the host calls (Mach / CoreFoundation / clonefile / sysctl / sha256)
     c += [DM / 'android/compat/darwin_compat.c', DM / 'android/compat/darwin_symbols.c', DM / 'android/compat/sha256.c']
-    # Third party: the VP9/VP8 decoder (hle_movie.c) and the zstd decoder library. hle_movie.c includes
-    # dm/third_party/stb_vorbis/stb_vorbis.c itself (with STB_VORBIS_NO_* defines), so it is NOT a separate source here:
-    # linking it again gives multiple definitions of every stb_vorbis_* function.
+    # Third party: the VP9/VP8 decoder (hle_movie.c) and the zstd decoder library (the Vulkan shader bundle also uses zstd).
+    # hle_movie.c includes dm/third_party/stb_vorbis/stb_vorbis.c itself (with STB_VORBIS_NO_* defines), so it is NOT a
+    # separate source here: linking it again gives multiple definitions of every stb_vorbis_* function.
     c += sorted((DM / 'third_party/libvpx').rglob('*.c'))
     c += [DM / 'third_party/zstd/zstddeclib.c']
     # The port's own layer: ELF libc table + main wrapper + weak platform stubs + the strong platform implementations.
@@ -112,6 +134,70 @@ def source_set():
     seen = set()
     c = [p for p in c if not (p in seen or seen.add(p))]
     return c, a
+
+
+def find_glslc():
+    """The shader compiler for the Vulkan backend's SPIR-V headers: the system glslc, else the Android NDK's."""
+    glslc = shutil.which('glslc')
+    if glslc:
+        return glslc
+    ndk = os.environ.get('ANDROID_NDK_HOME')
+    if ndk:
+        cand = Path(ndk) / 'shader-tools' / 'linux-x86_64' / 'glslc'
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
+def gen_android_profile(game, gen_dir, debug):
+    """<gen>/android_profile.h (the on-screen gamepad layouts, overlay_layout.h), as dm/android/build.py makes it."""
+    target = gen_dir / 'android_profile.h'
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    r = run([sys.executable, DM / 'android/tools/android_profile.py', 'header', game, target], quiet=not debug)
+    if r.returncode:
+        print(f'error: could not generate {rel(target)} for game profile {game}', file=sys.stderr)
+        return False
+    return True
+
+
+def gen_shader_headers(gen_dir, debug):
+    """<gen>/<name>_<stage>.spv.h for every dm/android/shaders/*.*: glslc --target-env=vulkan1.1 -O, embedded as a uint32_t array
+    exactly as dm/android/build.py does (gfx_vk_present.c / gfx_vk_exec.c include them). A missing glslc is a hard error: a build
+    with empty shaders would link and then fail on the device."""
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    glslc = find_glslc()
+    if not glslc:
+        print('error: --gfx vk needs glslc to compile the backend shaders (nxnative/dm/android/shaders).\n'
+              '       Install it (Arch: sudo pacman -S shaderc; or set ANDROID_NDK_HOME to an NDK with shader-tools).', file=sys.stderr)
+        return False
+    glslc_mtime = 0
+    try:
+        glslc_mtime = Path(glslc).stat().st_mtime_ns
+    except OSError:
+        pass
+    n = 0
+    for sh in sorted(SHADERS.glob('*.*')):
+        hdr = gen_dir / f'{sh.stem}_{sh.suffix[1:]}.spv.h'
+        if hdr.exists() and hdr.stat().st_mtime_ns >= sh.stat().st_mtime_ns and hdr.stat().st_mtime_ns >= glslc_mtime:
+            continue
+        spv = gen_dir / (sh.name + '.spv')
+        r = run([glslc, '--target-env=vulkan1.1', '-O', sh, '-o', spv], quiet=not debug)
+        if r.returncode:
+            print(f'error: glslc failed on {rel(sh)}', file=sys.stderr)
+            return False
+        data = spv.read_bytes()
+        if not data or len(data) % 4:
+            print(f'error: glslc produced no SPIR-V for {rel(sh)}', file=sys.stderr)
+            return False
+        words = struct.unpack(f'<{len(data) // 4}I', data)
+        name = f'{sh.stem}_{sh.suffix[1:]}'
+        body = ', '.join(f'{w:#010x}' for w in words)
+        hdr.write_text(f'// generated from nxnative/dm/android/shaders/{sh.name} by build_host.py --gfx vk (glslc)\n'
+                       f'static const uint32_t {name}_spv[] = {{{body}}};\n', encoding='utf-8')
+        spv.unlink()
+        n += 1
+    print(f'vk headers: android_profile.h' + (f', {n} shader header(s) generated' if n else ', shader headers up to date'))
+    return True
 
 
 def deps_of(obj, depfile):
@@ -164,14 +250,19 @@ def posix_quote(arg):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Build the upstream host core natively for aarch64 Linux (nx2alarm-host).')
+    global OUT, OBJ, ASM, BIN
+    ap = argparse.ArgumentParser(description='Build the upstream host core natively for aarch64 Linux (nx2alarm-host / nx2alarm-host-vk).')
+    ap.add_argument('--gfx', choices=['null', 'vk'], default='null',
+                    help='graphics backend: null (default, M1: build/alarm/nx2alarm-host) or vk (real Vulkan backend, build/alarm/nx2alarm-host-vk)')
     ap.add_argument('--debug', action='store_true', help='print every command and its full output')
-    ap.add_argument('--clean', action='store_true', help='remove the build directory and the output binary first')
+    ap.add_argument('--clean', action='store_true', help='remove this backend\'s build directory and output binary first')
     ap.add_argument('--game', default=DEFAULT_GAME, help=f'game profile title ID whose constants are compiled in (default {DEFAULT_GAME})')
     ap.add_argument('-j', type=int, default=min(3, os.cpu_count() or 1), help='parallel compile jobs (default 3: the machine has 8 cores and tight RAM)')
     args = ap.parse_args()
+    OUT, OBJ, ASM, BIN = output_paths(args.gfx)
 
     t0 = time.time()
+    print(f'gfx backend: {args.gfx}  ({"null graphics" if args.gfx == "null" else "Vulkan via gfx_vk_* + dm/alarm/gfx_vk_alarm.c"})')
     if args.clean:
         shutil.rmtree(OUT, ignore_errors=True)
         try:
@@ -182,17 +273,22 @@ def main():
     OBJ.mkdir(parents=True, exist_ok=True)
     ASM.mkdir(parents=True, exist_ok=True)
 
-    # ---- game profile header ----
-    gen_dir = OUT / 'gen' / args.game
+    # ---- game profile header (+ the Vulkan backend's generated headers) ----
+    # The null build keeps its per-game header directory (build/alarm/host/gen/<game>/). The vk build's generated headers all go
+    # into build/alarm/host-vk/gen/ (the compiler's include path for the backend's shader headers, as the task specifies).
+    gen_dir = OUT / 'gen' / args.game if args.gfx == 'null' else OUT / 'gen'
     profile = gen_dir / 'game_profile.h'
     gen_dir.mkdir(parents=True, exist_ok=True)
     r = run([sys.executable, DM / 'games/game.py', 'header', args.game, profile], quiet=not args.debug)
     if r.returncode:
         print(f'error: could not generate {rel(profile)} for game profile {args.game}', file=sys.stderr)
         return 1
+    if args.gfx == 'vk':
+        if not (gen_android_profile(args.game, gen_dir, args.debug) and gen_shader_headers(gen_dir, args.debug)):
+            return 1
 
     # ---- assembly: Apple (Mach-O) assembly converted to ELF ----
-    c_sources, a_sources = source_set()
+    c_sources, a_sources = source_set(args.gfx)
     asm_outputs = []
     asm_jobs = []
     for src in a_sources:
@@ -210,7 +306,7 @@ def main():
             return 1
 
     # ---- compile ----
-    compile_cmd = ['gcc'] + CFLAGS + ['-I' + str(p) for p in INCLUDES + [gen_dir]]
+    compile_cmd = ['gcc'] + CFLAGS + ['-I' + str(p) for p in include_dirs(args.gfx) + [gen_dir]]
     tp_cmd = ['gcc'] + TP_FLAGS + ['-I' + str(p) for p in TP_INCLUDES]
     jobs = []
     for src in c_sources:
@@ -281,7 +377,7 @@ def main():
         print(r.stderr)
 
     size = BIN.stat().st_size
-    print(f'built {rel(BIN)} ({size} bytes, {size / 1048576:.1f} MiB) in {time.time() - t0:.1f}s')
+    print(f'built {rel(BIN)} ({size} bytes, {size / 1048576:.1f} MiB, {args.gfx} gfx backend) in {time.time() - t0:.1f}s')
     return 0
 
 
