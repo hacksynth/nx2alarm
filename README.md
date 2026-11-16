@@ -1,5 +1,7 @@
 # nx2alarm
 
+[github.com/hacksynth/nx2alarm](https://github.com/hacksynth/nx2alarm)
+
 **Native Nintendo Switch game ports for Arch Linux ARM** — a compatibility layer that runs
 the game's own arm64 code on an aarch64 Linux device, replaces the Switch's system services
 with a host layer, and replays NVN graphics on Vulkan.
