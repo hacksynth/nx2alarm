@@ -119,7 +119,7 @@ sudo pacman -S vulkan-freedreno vulkan-tools     # then: vulkaninfo --summary
 sudo modprobe system_heap                        # optional, M5 zero-copy; add to modules-load.d
 ```
 
-## 5. Cross-check with the hardware audit (`/home/live/Documents/deepseek-harness/default-workspace/硬件功能缺失审计.md`)
+## 5. Cross-check with the hardware audit (the workspace's `硬件功能缺失审计.md`)
 
 | Audit finding | Matters for nx2alarm? |
 |---|---|
