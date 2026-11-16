@@ -22,6 +22,11 @@ interfaces, ownership, acceptance checks).
 - `build.py` — shell build (SDL3) and `--target vk-smoke` (M2 tool; needs `glslc`).
 - `build_host.py` — host-core build (gcc, glibc, `dm/android/compat` Darwin shims); `--gfx {null,vk}`.
 - `vk_smoke.c` + `vk/bc_sample.comp` — M2 Vulkan tool (device/BC/present verification).
+- `port_alarm.py` — M3 pipeline: upstream survey/extract/rewrite stages + Linux host build + a
+  `<App>-linux/` port folder (`mods/`, `RomFS/`, `run.sh`). Needs the porter venv, .NET SDK 10
+  and the owner's game files/`prod.keys`; see `docs/M3_ATTEMPT.md`.
+- `gl_alarm.c` — the Linux OpenGL/EGL host layer (gl_android.c's port; ES and desktop GL;
+  built with `build_host.py --gl`).
 - `check_vk.sh` — compile-check the whole Vulkan backend for Linux without a device.
 - `entry_alarm.c` — CLI dispatch (`shell`, `doctor`, `version`, `help`).
 - `front_alarm.c` — SDL3 front end; also the Linux `front_run()`/`front_text_input()` the
@@ -71,8 +76,12 @@ $ python3 nxnative/dm/alarm/build_host.py --gfx vk     # nx2alarm-host-vk (9.6 M
   swapchain + present at ~60 fps in BGRA8 and RGBA8 with resize, `build_host.py --gfx vk`
   links the real backend. No zero-copy pools yet (`/dev/dma_heap` absent → copied pools);
   the BGRA8 conversion draw is compile-only until a game frame exists (M2.1).
-- Not implemented yet: real gameplay/porter Linux target, H.264/AAC movies (graceful stub),
-  on-screen gamepad/pause menu, GLES games, dma-buf zero-copy. See `docs/PORTING_PLAN.md`.
+- **M3 started (2026-11-16):** `port_alarm.py` extracts and rewrites a real game
+  (`DM_TARGET=alarm`, glibc guest TLS variable + `--tsd-offset`), builds the host with the GL
+  layer, and assembles a port folder. The first attempt (Dragon Quest Builders, unsupported,
+  OpenGL) booted to `nnMain`, SDK init and desktop GL 4.6 (FD630) then crashed in guest init;
+  see `docs/M3_ATTEMPT.md`. Presentation is still a no-op (offscreen pbuffer), the front end and
+  input are not wired, and no supported-title boot has happened yet.
 
 Evidence: `docs/M1_VERIFICATION.md` and `docs/M2_VERIFICATION.md` at the repository root; the
 device audit is `docs/FEASIBILITY.md`.

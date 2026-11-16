@@ -37,10 +37,17 @@ running Arch Linux ARM.
 >
 > ![nx2alarm-vk smoke: GPU round-trip pattern](docs/images/nx2alarm-vk-smoke.png)
 >
-> Not yet: `porter` producing Linux ports, real gameplay, movies, on-screen gamepad; the host
-> backend's own `vk_init()`/first game frame needs game data (M3). The path is in
-> [`docs/PORTING_PLAN.md`](docs/PORTING_PLAN.md); evidence in
-> [`docs/M2_VERIFICATION.md`](docs/M2_VERIFICATION.md).
+> **M3 has begun** (2026-11-16): with the owner's own game dump and `prod.keys`, the new
+> `nxnative/dm/alarm/port_alarm.py` pipeline extracted and rewrote **Dragon Quest Builders**
+> (an unsupported, OpenGL title: provisional profile, `DM_TARGET=alarm`, glibc guest TLS) and
+> booted it through `nnMain`, SDK initialization and a real **desktop OpenGL 4.6** context on the
+> Adreno 630; the guest then crashed in its own init code. The Linux GL/EGL host layer
+> (`gl_alarm.c`) is new. Details and next steps: [`docs/M3_ATTEMPT.md`](docs/M3_ATTEMPT.md).
+>
+> Not yet: gameplay, movies, on-screen gamepad, the Vulkan host's own first game frame, and a
+> supported-title first boot. The path is in [`docs/PORTING_PLAN.md`](docs/PORTING_PLAN.md);
+> evidence in [`docs/M1_VERIFICATION.md`](docs/M1_VERIFICATION.md),
+> [`docs/M2_VERIFICATION.md`](docs/M2_VERIFICATION.md) and [`docs/M3_ATTEMPT.md`](docs/M3_ATTEMPT.md).
 
 Read the plan: [`docs/PORTING_PLAN.md`](docs/PORTING_PLAN.md) ·
 [`docs/ALARM_PORT.md`](docs/ALARM_PORT.md) (M1 contract) ·

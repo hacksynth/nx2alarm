@@ -104,6 +104,14 @@ revisit with a Mesa/Turnip bug report or a reduced feature set.
    Metroid Dread (NVN, 60 fps) if Turnip holds. Avoid games needing firmware `sysdata` or
    movie decoding first.
 
+**Progress (2026-11-16, first attempt):** the pipeline now runs on ALARM
+(`nxnative/dm/alarm/port_alarm.py`: survey → extract → `DM_TARGET=alarm` rewrite → Linux host →
+port folder), with the glibc guest-TLS mechanism and a new OpenGL/EGL host layer (`gl_alarm.c`).
+The owner's first game (Dragon Quest Builders, an unsupported GL title) boots through `nnMain`,
+SDK init and a desktop OpenGL 4.6 context, then crashes in its own init on a null dispatch
+pointer; no missing HLE imports at that point. Details: `docs/M3_ATTEMPT.md`. Next: debug that
+guest init (or boot a supported title), wire the SDL front end/input and presentation.
+
 **Acceptance:** the first title reaches gameplay at a stable frame rate with audio; a 10-minute
 run shows no host crash; save/export works in the XDG save dir; logs contain no unresolved
 `[RED]` host diagnostics that block play.
@@ -155,6 +163,6 @@ These are engineering estimates, not promises; the first game boot is where most
 - [x] M0 upstream snapshot
 - [x] M1 shell + host compile (2026-11-16)
 - [x] M2 Vulkan on the real GPU (device, present, BC; M2.1 conversion/dma-buf remain)
-- [ ] M3 first game boot
+- [ ] M3 first game boot (attempted 2026-11-16: pipeline + GL layer + boot to `nnMain`/GL 4.6; guest-init crash in `docs/M3_ATTEMPT.md`)
 - [ ] M4 feature parity
 - [ ] M5 performance + packaging
