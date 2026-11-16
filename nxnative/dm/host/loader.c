@@ -43,6 +43,38 @@ static void tsd_check(void) {
     if (((uint64_t *)(base & ~7ull))[off / 8] != 0x1234) die("TSD layout mismatch");
     pthread_setspecific(g_key18, 0);
 }
+#elif defined(DM_ALARM)
+// Linux/glibc (nx2alarm): glibc's TCB does not reserve a slot for the app (its TP+0..15 are the TCB and TP+16 is the
+// first module's TLS data). The host executable carries one TLS variable instead, whose TP-relative offset is stable
+// for a given host build; `nx2alarm-host --tsd-offset` prints it, the port build passes it to the rewriter
+// (DM_TARGET=alarm DM_ALARM_TSD_OFFSET), and a rewritten slot access reads this variable's value (the per-thread
+// slot block pointer) and adds the key page entry. The block is freed when the thread exits.
+__thread void *dm_alarm_tsd_block;
+#define TSD_SLOTS 8
+static pthread_key_t g_tsd_free;
+static void tsd_block_free(void *b) { if (dm_alarm_tsd_block == b) dm_alarm_tsd_block = NULL; free(b); }
+static uint64_t *tsd_block(void) {
+    uint64_t *b = dm_alarm_tsd_block;
+    if (!b) {
+        if (!(b = calloc(TSD_SLOTS, sizeof *b))) die("guest thread slot block allocation failed");
+        dm_alarm_tsd_block = b; pthread_setspecific(g_tsd_free, b);
+    }
+    return b;
+}
+void dm_tsd_set(pthread_key_t k, const void *v) { tsd_block()[k] = (uint64_t)(uintptr_t)v; }
+void *dm_tsd_get(pthread_key_t k) { return (void *)(uintptr_t)tsd_block()[k]; }
+static void create_keys(void) {
+    if (pthread_key_create(&g_tsd_free, tsd_block_free)) die("cannot create the slot block key");
+    g_key18 = 1; g_keytls = 2; g_keytlr = 3; g_keygate = 4;
+    LOG("guest thread slots in a glibc TLS variable: K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu", (unsigned long)g_key18, (unsigned long)g_keytls, (unsigned long)g_keytlr, (unsigned long)g_keygate);
+}
+// K slot check: the slot the rewritten code reads (tpidr_el0 + DM_ALARM_TSD_OFFSET, then the key page entry) is the one dm_tsd_set wrote
+static void tsd_check(void) {
+    dm_tsd_set(g_key18, (void *)0x1234);
+    uint64_t off = *(uint64_t *)(g_mod[0].base + g_mod[0].key_page_off + g_mod[0].key_idx[KEY_K18] * 8);
+    if (*(uint64_t *)((uint8_t *)dm_alarm_tsd_block + off) != 0x1234) die("guest thread slot layout mismatch");
+    dm_tsd_set(g_key18, 0);
+}
 #else
 // Android: bionic owns tpidr_el0 (its TLS) and 64-bit tasks read 0 from tpidrro_el0. Each thread that runs guest code gets a block of slots whose address
 // sits in bionic's TLS_SLOT_APP (tpidr_el0[2], reserved for app use); the "keys" are indices 1..4 into it (0 stays unused: the loader takes a 0 key page
@@ -238,6 +270,8 @@ static void read_layout(module_t *m, const char *dir) {
     fclose(f);
 #if defined(__APPLE__)
     static const char *const want = "apple";
+#elif defined(DM_ALARM)
+    static const char *const want = "alarm";
 #else
     static const char *const want = "android";
 #endif

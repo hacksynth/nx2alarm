@@ -107,10 +107,17 @@ def emit(w, kind=None):
 
 # Where a thread's slots are (DM_TARGET). apple: Darwin's TSD, slot = tpidrro_el0 + key number * 8. android: tpidrro_el0 reads 0 for 64-bit Linux tasks and
 # bionic owns tpidr_el0, so each guest thread's slot block hangs off bionic's TLS_SLOT_APP (tpidr_el0[2], reserved for app use) and the key page holds offsets
-# into that block (the Android host's dm_tsd_*): one more load per slot access
-TARGET = os.environ.get('DM_TARGET', 'apple'); assert TARGET in ('apple', 'android'), f'DM_TARGET {TARGET}: apple or android'
+# into that block (the Android host's dm_tsd_*): one more load per slot access.
+# alarm (nx2alarm, glibc): glibc's TCB has no app slot, so the host executable carries one __thread pointer
+# (dm_alarm_tsd_block, nxnative/dm/host/loader.c) and the port build tells this rewriter where that TLS variable
+# sits relative to tpidr_el0 (DM_ALARM_TSD_OFFSET, printed by `nx2alarm-host --tsd-offset`); a slot access reads
+# the block pointer from tpidr_el0 + offset, then adds the key page entry as on Android.
+TARGET = os.environ.get('DM_TARGET', 'apple'); assert TARGET in ('apple', 'android', 'alarm'), f'DM_TARGET {TARGET}: apple, android or alarm'
+TS_ALARM_OFF = int(os.environ.get('DM_ALARM_TSD_OFFSET', '16'))
+if TARGET == 'alarm': assert 0 <= TS_ALARM_OFF <= 4095, f'DM_ALARM_TSD_OFFSET {TS_ALARM_OFF}: expected 0..4095'
 def emit_tp(t):
     if TARGET == 'android': emit(MRS_TPIDR(t)); emit(LDRX(t, t, 2))
+    elif TARGET == 'alarm': emit(MRS_TPIDR(t)); emit(ADDI(t, t, TS_ALARM_OFF)); emit(LDRX(t, t, 0))
     else: emit(MRS_TPIDRRO(t))
 
 def emit_key_addr(reg, kind):
