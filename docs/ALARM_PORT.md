@@ -69,9 +69,17 @@ All acceptance checks in §6 ran green on this machine; the full log is `docs/M1
 | Vulkan backend | 9/9 sources compile with `-DDM_ALARM`; surface/present guarded; AHardwareBuffer refused → copied-pool fallback; no runtime test (no ICD) |
 | Upstream tests | 267 run, **0 failures**, 22 errors from missing optional Python packages (`lz4`, `PIL`, …), 50 skips; the focused present-timing test that the guarded edit touches is green |
 
-Remaining for M2/M3: install `vulkan-freedreno` + `vulkan-tools`, implement `vk-smoke`, port the
-present path end-to-end (swapchain format conversion is an identified gap), `porter --target
-alarm`, guest loader/TLS validation, movies and UI. Tracked in `docs/PORTING_PLAN.md`.
+**M2 (2026-11-16, after installing `vulkan-freedreno` + `vulkan-tools`):** Turnip Adreno 630 /
+Vulkan 1.3.354 detected by `doctor` (16 PASS/3 WARN/0 FAIL); `nx2alarm-vk info|bc|smoke` verified
+the device, BC1+BC3 GPU decode, and SDL3→surface→Wayland swapchain→present at ~60 fps in both
+BGRA8 and RGBA8 with resize handling; `build_host.py --gfx vk` links the real backend
+(`nx2alarm-host-vk`, 9.6 MiB, no Android/Vulkan NEEDED). Remaining: M2.1 BGRA8 conversion draw
+runtime test + dma-buf zero-copy; then M3 (`porter --target alarm`, game data, guest TLS).
+Evidence: `docs/M2_VERIFICATION.md`.
+
+Remaining for M2.1/M3: the conversion draw is compile-only until a game frame exists; dma-buf
+zero-copy needs `/dev/dma_heap`; `porter --target alarm`, guest loader/TLS validation, movies
+and UI. Tracked in `docs/PORTING_PLAN.md`.
 
 ## 3. Environment facts (this machine, measured)
 

@@ -12,32 +12,40 @@ Android's NativeActivity/APK/AAudio/MediaCodec, and native aarch64 builds with g
 the Android NDK. The target device is a Huawei MateBook E 2019 (Snapdragon 850 / Adreno 630)
 running Arch Linux ARM.
 
-> **Status: M1 — shell + native host compile, delivered (2026-11-16).** This checkout does
-> **not** play games yet. What works today on the target device (verified, see
-> [`docs/M1_VERIFICATION.md`](docs/M1_VERIFICATION.md)):
+> **Status: M1 + M2 — shell, native host compile, and Vulkan on the real GPU (2026-11-16).**
+> The device now has `vulkan-freedreno` (Turnip 26.2.4, Vulkan 1.3.354), and the Vulkan path is
+> verified up to a presented frame and BC texture decode. This checkout still does **not** play
+> games: that is M3 and needs the owner's game files + `prod.keys`.
 >
-> - `nx2alarm doctor` — device/prerequisite audit on Arch Linux ARM: 14 PASS / 5 WARN / 0 FAIL;
->   the WARNs are the real next prerequisites (Vulkan ICD missing, no dma-buf heap, no game data);
-> - `nx2alarm shell` — a native SDL3 window shell with the audit rendered on screen (Wayland,
->   OpenGL renderer, screenshot mode, headless mode): 75 KiB binary, no Android tooling,
->   no Vulkan ICD needed;
-> - `nx2alarm-host` — the upstream nxnative host core (182 C + 3 asm sources: Horizon HLE + NVN
->   layer + null graphics backend) compiled natively with gcc for aarch64 Linux and linked
->   without Android libraries: 7.7 MiB, starts and prints the upstream usage message;
-> - the Linux platform layer (SDL3 audio, XDG saves, LAN, haptics, perf, assets) and a
->   compile-checked port of the Vulkan backend's surface/present and memory-pool edges
->   (9/9 sources with `-DDM_ALARM`), with no runtime test possible until a Vulkan ICD is installed.
+> - `nx2alarm doctor` — device/prerequisite audit on Arch Linux ARM: **16 PASS / 3 WARN / 0 FAIL**;
+>   the WARNs are the remaining next steps (no `/dev/dma_heap` → copied pools, no game keys,
+>   no game data);
+> - `nx2alarm shell` — native SDL3 window shell with the audit on screen (Wayland, screenshot
+>   and headless modes), 75 KiB, no Android tooling;
+> - `nx2alarm-vk` — M2 hardware test: `info` (device/features/BC formats), `bc` (BC1+BC3 GPU
+>   decode, PASS), `smoke` (SDL3 → `VkSurfaceKHR` → Wayland swapchain → present; ~60 fps FIFO
+>   in both BGRA8 and RGBA8, resize handled, GPU round-trip screenshot);
+> - `nx2alarm-host` / `nx2alarm-host-vk` — the upstream nxnative host core compiled natively with
+>   gcc (Horizon HLE + NVN layer), 7.7 MiB with the null backend and 9.6 MiB with the real
+>   Vulkan backend (`--gfx vk`); both start and print the upstream usage message without game
+>   data, and link no Android libraries;
+> - the Linux platform layer (SDL3 audio, XDG saves, LAN, haptics, perf, assets) and the Vulkan
+>   backend port (`#ifdef DM_ALARM`: SDL surface/present, copied-pool fallback, BGRA8 conversion
+>   draw compiled).
 >
 > ![nx2alarm shell on the MateBook E 2019](docs/images/nx2alarm-shell.png)
 >
-> Not yet: `porter` producing Linux ports, real gameplay, movies, on-screen gamepad. No game
-> files, keys, Android NDK, .NET SDK or Vulkan ICD are present on the target machine, so M1
-> stops at the shell and the host bootstrap. The path to playable games is in
-> [`docs/PORTING_PLAN.md`](docs/PORTING_PLAN.md).
+> ![nx2alarm-vk smoke: GPU round-trip pattern](docs/images/nx2alarm-vk-smoke.png)
+>
+> Not yet: `porter` producing Linux ports, real gameplay, movies, on-screen gamepad; the host
+> backend's own `vk_init()`/first game frame needs game data (M3). The path is in
+> [`docs/PORTING_PLAN.md`](docs/PORTING_PLAN.md); evidence in
+> [`docs/M2_VERIFICATION.md`](docs/M2_VERIFICATION.md).
 
 Read the plan: [`docs/PORTING_PLAN.md`](docs/PORTING_PLAN.md) ·
 [`docs/ALARM_PORT.md`](docs/ALARM_PORT.md) (M1 contract) ·
 [`docs/M1_VERIFICATION.md`](docs/M1_VERIFICATION.md) (M1 evidence) ·
+[`docs/M2_VERIFICATION.md`](docs/M2_VERIFICATION.md) (M2 Vulkan evidence) ·
 [`docs/ALARM_ARCHITECTURE.md`](docs/ALARM_ARCHITECTURE.md) ·
 [`docs/FEASIBILITY.md`](docs/FEASIBILITY.md) (device audit) ·
 [`nxnative/dm/alarm/GFX_VK_PORT.md`](nxnative/dm/alarm/GFX_VK_PORT.md) (M2 Vulkan map).
@@ -55,6 +63,16 @@ python3 nxnative/dm/alarm/build.py --target shell
 # The host core, compiled natively for aarch64 Linux (null graphics backend):
 python3 nxnative/dm/alarm/build_host.py
 ./build/alarm/nx2alarm-host          # prints the upstream usage: a game build dir is required
+
+# M2 Vulkan hardware test (needs vulkan-freedreno; M1 shell does not):
+python3 nxnative/dm/alarm/build.py --target vk-smoke
+./build/alarm/nx2alarm-vk info
+./build/alarm/nx2alarm-vk bc
+./build/alarm/nx2alarm-vk smoke --frames 120 --format bgra --screenshot /tmp/vk.ppm
+
+# Host binary with the real Vulkan backend instead of the null one:
+python3 nxnative/dm/alarm/build_host.py --gfx vk
+./build/alarm/nx2alarm-host-vk
 ```
 
 Requirements for M1: Arch Linux ARM, gcc (16 works), SDL3 (`sdl3`), pkg-config, Python 3.

@@ -35,7 +35,7 @@ Android target kept intact, `nxnative/dm/alarm/` added for the Linux layer.
 
 **Acceptance (run by the Lead):** exact commands in `docs/ALARM_PORT.md` §6, all passing;
 `nx2alarm doctor` reports the missing Vulkan ICD as a warning; `nx2alarm-host` usage path
-works; no Android libs in `ldd`.
+works; no Android libs in `ldd`. **Delivered 2026-11-16**; log: `docs/M1_VERIFICATION.md`.
 
 **Risks:** glibc/bionic differences (guest TLS slot, `sysctl`, futex, `__clear_cache`),
 Apple-only sections in shared sources, missing Android emulation for some HLE paths (movie,
@@ -65,9 +65,14 @@ window, with the copy-pool memory path.
    renders a gradient/checker to prove the GPU can read BC-compressed data (the porting
    requirement from the README).
 
-**Acceptance:** `vulkaninfo` shows a6xx; `nx2alarm vk-smoke --frames 120 --screenshot
-/tmp/vk.ppm` exits 0 with a correctly colored frame; BC probe renders expected texels; no
-validation-layer errors (if installed).
+**Acceptance:** `vulkaninfo` shows a6xx; `nx2alarm-vk smoke --frames 120 --format bgra
+--screenshot /tmp/vk.ppm` exits 0 with a correctly coloured frame; `nx2alarm-vk bc` decodes
+BC1/BC3 correctly; no validation-layer errors (if installed). **Delivered 2026-11-16** —
+Turnip 26.2.4 / Vulkan 1.3.354, BC1–BC7 supported, BC1+BC3 decode PASS, present ~60 fps in
+BGRA8 and RGBA8, resize handled; `build_host.py --gfx vk` links the real backend. Remaining
+M2.1: the BGRA8 swapchain conversion draw is compile-only until a game frame exists, and
+dma-buf zero-copy needs `/dev/dma_heap` (module load). Log:
+`docs/M2_VERIFICATION.md`.
 **Risks:** Turnip feature gaps vs Android Qualcomm driver (descriptor indexing, timeline
 semaphores, dynamic rendering, 16-bit storage), Wayland swapchain vs eDP scaling, thermal
 throttling at 1440p (use 720p/1080p).
@@ -148,8 +153,8 @@ These are engineering estimates, not promises; the first game boot is where most
 ## Milestone tracker
 
 - [x] M0 upstream snapshot
-- [ ] M1 shell + host compile (this session)
-- [ ] M2 Vulkan smoke on a6xx
+- [x] M1 shell + host compile (2026-11-16)
+- [x] M2 Vulkan on the real GPU (device, present, BC; M2.1 conversion/dma-buf remain)
 - [ ] M3 first game boot
 - [ ] M4 feature parity
 - [ ] M5 performance + packaging

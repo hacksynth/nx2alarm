@@ -14,11 +14,15 @@ interfaces, ownership, acceptance checks).
 |---|---|---|
 | `build/alarm/nx2alarm` | `python3 nxnative/dm/alarm/build.py --target shell` | Shell + doctor. Runs without game files, Android NDK or Vulkan ICD. |
 | `build/alarm/nx2alarm-host` | `python3 nxnative/dm/alarm/build_host.py` | The upstream host core (Horizon HLE + NVN replay, null graphics) compiled natively for aarch64 Linux. Starts and prints the upstream usage message without a game build directory. |
+| `build/alarm/nx2alarm-host-vk` | `python3 nxnative/dm/alarm/build_host.py --gfx vk` | The same host core with the **real Vulkan backend** (`gfx_vk_*.c` + `gfx_vk_alarm.c`); same usage path without game data. Links no libvulkan (the backend dlopens the loader). |
+| `build/alarm/nx2alarm-vk` | `python3 nxnative/dm/alarm/build.py --target vk-smoke` | M2 hardware test: `info` (device/features/BC formats), `bc` (BC1/BC3 GPU decode), `smoke` (SDL3→VkSurface→swapchain→present, `--screenshot`, `--format bgra|rgba`). Needs `vulkan-freedreno`. |
 
 ## Layout
 
-- `build.py` — shell build (SDL3).
-- `build_host.py` — host-core build (gcc, glibc, `dm/android/compat` Darwin shims, null gfx).
+- `build.py` — shell build (SDL3) and `--target vk-smoke` (M2 tool; needs `glslc`).
+- `build_host.py` — host-core build (gcc, glibc, `dm/android/compat` Darwin shims); `--gfx {null,vk}`.
+- `vk_smoke.c` + `vk/bc_sample.comp` — M2 Vulkan tool (device/BC/present verification).
+- `check_vk.sh` — compile-check the whole Vulkan backend for Linux without a device.
 - `entry_alarm.c` — CLI dispatch (`shell`, `doctor`, `version`, `help`).
 - `front_alarm.c` — SDL3 front end; also the Linux `front_run()`/`front_text_input()` the
   host core expects.
@@ -41,29 +45,35 @@ interfaces, ownership, acceptance checks).
 
 ## Status
 
-**M1 delivered (2026-11-16).** On the target machine (Huawei MateBook E 2019, aarch64 Arch
-Linux ARM, gcc 16, SDL3 3.4.20, no Vulkan ICD, no game data):
+**M1 + M2 delivered (2026-11-16).** On the target machine (Huawei MateBook E 2019, aarch64 Arch
+Linux ARM, gcc 16, SDL3 3.4.20, Turnip 26.2.4 / Vulkan 1.3.354 installed, no game data):
 
 ```console
 $ python3 nxnative/dm/alarm/build.py --target shell   # 3 sources, 0 warnings, 75 KiB
-$ ./build/alarm/nx2alarm doctor                        # 14 pass, 5 warn, 0 fail (exit 0)
+$ ./build/alarm/nx2alarm doctor                        # 16 pass, 3 warn, 0 fail (M2)
 $ ./build/alarm/nx2alarm shell --frames 3 --screenshot /tmp/nx2alarm.ppm
 $ python3 nxnative/dm/alarm/build_host.py              # 182 C + 3 asm -> nx2alarm-host (7.7 MiB)
 $ ./build/alarm/nx2alarm-host                          # upstream usage; no Android libs in ldd
 $ bash nxnative/dm/alarm/check_vk.sh                    # 9/9 Vulkan sources compile with -DDM_ALARM
+# M2:
+$ python3 nxnative/dm/alarm/build.py --target vk-smoke
+$ ./build/alarm/nx2alarm-vk info                       # Turnip Adreno 630, Vulkan 1.3.354
+$ ./build/alarm/nx2alarm-vk bc                         # BC1/BC3 decode PASS
+$ ./build/alarm/nx2alarm-vk smoke --frames 120 --format bgra --screenshot /tmp/vk.ppm
+$ python3 nxnative/dm/alarm/build_host.py --gfx vk     # nx2alarm-host-vk (9.6 MiB)
 ```
 
 - `nx2alarm` (75 KiB): SDL3 shell/audit; `NEEDED` = SDL3/libm/libc only.
 - `nx2alarm-host` (8,066,920 B): upstream host core + null graphics + Linux platform layer
   (audio, saves, LAN, haptics, perf, assets) compiled with gcc; starts without game data and
   prints the upstream usage; the weak symbols are only the five front-end window defaults.
-- Vulkan backend: platform edges guarded with `DM_ALARM`, all sources compile; not runnable
-  until a Vulkan ICD is installed (M2). No zero-copy pools: AHardwareBuffer allocations are
-  refused so the backend uses its copied-pool fallback (`/dev/dma_heap` is absent here).
-- Not implemented in M1: real gameplay/porter Linux target, H.264/AAC movies (graceful stub),
-  on-screen gamepad/pause menu, GLES games, zero-copy dma-buf pools. See
-  `docs/PORTING_PLAN.md` for M2–M5.
+- M2 Vulkan: Turnip device/1.3.354 verified, BC1+BC3 GPU decode PASS, SDL surface + Wayland
+  swapchain + present at ~60 fps in BGRA8 and RGBA8 with resize, `build_host.py --gfx vk`
+  links the real backend. No zero-copy pools yet (`/dev/dma_heap` absent → copied pools);
+  the BGRA8 conversion draw is compile-only until a game frame exists (M2.1).
+- Not implemented yet: real gameplay/porter Linux target, H.264/AAC movies (graceful stub),
+  on-screen gamepad/pause menu, GLES games, dma-buf zero-copy. See `docs/PORTING_PLAN.md`.
 
-The full evidence log is `docs/M1_VERIFICATION.md` at the repository root; the device audit is
-`docs/FEASIBILITY.md`.
+Evidence: `docs/M1_VERIFICATION.md` and `docs/M2_VERIFICATION.md` at the repository root; the
+device audit is `docs/FEASIBILITY.md`.
 
