@@ -180,7 +180,7 @@ Replace `dm/android/gfx_null.c` with the vk set and add the glue + generated hea
 
 ## 7. Compile-check (this session)
 
-Artifact script (not part of the build): `build/alarm/vkcheck/cc.sh`; per-game generated headers in
+Artifact script (committed, not part of the build): `nxnative/dm/alarm/check_vk.sh`; per-game generated headers in
 `build/alarm/vkcheck/gen/` (`game_profile.h`, `android_profile.h`, the 8 shader `.spv.h` files
 generated with the system `glslc`). It runs:
 `gcc -c <src> -O2 -DDM_ALARM=1 -D_GNU_SOURCE -Wall -Wno-unused-function -Wno-unused-variable

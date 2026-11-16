@@ -129,7 +129,7 @@ report — the upstream behavior for missing game data.
 ## 5. Vulkan backend compile check (M2 groundwork)
 
 ```console
-$ bash build/alarm/vkcheck/cc.sh 2>/dev/null | grep -E '^(OK|FAIL)'
+$ bash nxnative/dm/alarm/check_vk.sh | grep -E '^(OK|FAIL)'
 OK   nxnative/dm/android/gfx_common.c
 OK   nxnative/dm/android/gfx_vk_core.c
 OK   nxnative/dm/android/gfx_vk_present.c

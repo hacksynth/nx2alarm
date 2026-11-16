@@ -50,7 +50,7 @@ $ ./build/alarm/nx2alarm doctor                        # 14 pass, 5 warn, 0 fail
 $ ./build/alarm/nx2alarm shell --frames 3 --screenshot /tmp/nx2alarm.ppm
 $ python3 nxnative/dm/alarm/build_host.py              # 182 C + 3 asm -> nx2alarm-host (7.7 MiB)
 $ ./build/alarm/nx2alarm-host                          # upstream usage; no Android libs in ldd
-$ bash build/alarm/vkcheck/cc.sh                       # 9/9 Vulkan sources compile with -DDM_ALARM
+$ bash nxnative/dm/alarm/check_vk.sh                    # 9/9 Vulkan sources compile with -DDM_ALARM
 ```
 
 - `nx2alarm` (75 KiB): SDL3 shell/audit; `NEEDED` = SDL3/libm/libc only.
