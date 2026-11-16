@@ -93,6 +93,13 @@ static VkSurfaceTransformFlagBitsKHR g_pre = VK_SURFACE_TRANSFORM_IDENTITY_BIT_K
 static VkExtent2D g_next;   // the swapchain images' extent: the window's (g_sext), or the panel's orientation when pre-rotated
 static struct { VkImage img; VkDeviceMemory mem; VkImageView view; VkDescriptorSetLayout dsl; VkPipelineLayout layout; VkDescriptorPool pool; VkDescriptorSet set;
                 VkSampler samp; VkPipeline pipe; VkFormat pfmt; } g_rot;
+#if defined(DM_ALARM)
+// Identity present on a swapchain whose format is not blit-compatible with the window texture (Linux WSI offers B8G8R8A8_*):
+// instead of vkCmdBlitImage the picture is drawn with the rot pipeline (shaders/rot.*, which render into g_sfmt), sampling the
+// game's image. One descriptor set per present slot: its last use was waited for before recording, so it may be updated now; a
+// single set would race presents still in flight.
+static struct { int on; VkDescriptorPool pool; VkSampler samp; VkDescriptorSet set[8]; } g_conv;
+#endif
 static void rot_drop_image(void) {
     if (g_rot.view) vkDestroyImageView(V.dev, g_rot.view, NULL);
     if (g_rot.img) vkDestroyImage(V.dev, g_rot.img, NULL);
@@ -102,6 +109,9 @@ static void rot_drop_image(void) {
 static void swap_destroy(void) {
     pace_reset();
     present_time_reset();
+#if defined(DM_ALARM)
+    g_conv.on = 0;   // a new swapchain (and its format) decides again; the descriptor sets are updated before every use
+#endif
     if (g_swap) { vkDeviceWaitIdle(V.dev); ov_fb_drop(); for (uint32_t i = 0; i < g_nsimg; i++) if (g_sview[i]) { vkDestroyImageView(V.dev, g_sview[i], NULL); g_sview[i] = VK_NULL_HANDLE; }
                   vkDestroySwapchainKHR(V.dev, g_swap, NULL); g_swap = VK_NULL_HANDLE; rot_drop_image(); g_pre = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR; }
     if (g_surf) { vkDestroySurfaceKHR(V.inst, g_surf, NULL); g_surf = VK_NULL_HANDLE; }
@@ -184,15 +194,20 @@ static int swap_make(void) {
 #endif
     VkSurfaceCapabilitiesKHR caps; vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.pd, g_surf, &caps);
     uint32_t nf = 0; vkGetPhysicalDeviceSurfaceFormatsKHR(V.pd, g_surf, &nf, NULL); VkSurfaceFormatKHR sf[32]; if (nf > 32) nf = 32; vkGetPhysicalDeviceSurfaceFormatsKHR(V.pd, g_surf, &nf, sf);
+#if defined(DM_ALARM)
+    // Linux WSI (Wayland, Turnip) commonly offers only the B8G8R8A8_* formats, and vkCmdBlitImage needs format-compatible
+    // images (R8G8B8A8 vs B8G8R8A8 is not a compatible pair). Prefer the variant whose sRGB-ness matches the window
+    // texture's (g_want), so the conversion draw's sample decode and render-target encode cancel out and the game's bytes
+    // reach the display as before; the component order matters to neither sampling nor the draw's output.
+    g_sfmt = sf[0].format;
+    { int matched = 0; VkFormat bgra = g_want == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
+      for (uint32_t i = 0; i < nf && !matched; i++) if (sf[i].format == g_want) { g_sfmt = g_want; matched = 1; }
+      for (uint32_t i = 0; i < nf && !matched; i++) if (sf[i].format == bgra) { g_sfmt = bgra; matched = 1; }
+      if (!matched) VKRED_ONCE(95, "the surface offers neither format %d nor %d for the window texture: using %d, so the picture's colours are off", g_want, bgra, g_sfmt); }
+#else
     g_sfmt = sf[0].format; for (uint32_t i = 0; i < nf; i++) if (sf[i].format == VK_FORMAT_R8G8B8A8_UNORM) g_sfmt = sf[i].format;
     for (uint32_t i = 0; i < nf; i++) if (sf[i].format == g_want) g_sfmt = g_want;   // the window texture's sRGB-ness (g_want), so the blit copies its bytes as they are
     if (g_sfmt != g_want) VKRED_ONCE(95, "the surface offers no format %d for the window texture: its picture is %s", g_want, g_want == VK_FORMAT_R8G8B8A8_SRGB ? "darker" : "lighter");
-#if defined(DM_ALARM)
-    // Linux WSI often offers only the B8G8R8A8 family. The identity path blits from the game's RGBA8 window image into the
-    // swapchain image, and vkCmdBlitImage needs format-compatible images: this is a known gap (GFX_VK_PORT.md "Runtime risks"),
-    // fixed in M2.1 by a fullscreen-triangle conversion draw through the rot/overlay pipeline (which renders into g_sfmt anyway).
-    if (g_sfmt != VK_FORMAT_R8G8B8A8_UNORM && g_sfmt != VK_FORMAT_R8G8B8A8_SRGB)
-        VKRED_ONCE(96, "the surface offers no R8G8B8A8 format (using %d): the game picture's blit into it is not format-compatible", g_sfmt);
 #endif
 #if defined(DM_ALARM)
     // The SDL window's pixel size (compat/android/native_window.h): HiDPI safe, 0 when minimized or hidden
@@ -210,6 +225,14 @@ static int swap_make(void) {
     VkSurfaceTransformFlagBitsKHR turn = (VkSurfaceTransformFlagBitsKHR)(caps.currentTransform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR));
     g_pre = want && turn && (caps.supportedTransforms & turn) && V.has_dynrender && rot_setup() ? turn : VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     g_next = g_pre == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR ? g_sext : (VkExtent2D){g_sext.height, g_sext.width};
+#if defined(DM_ALARM)
+    // A fullscreen-triangle draw replaces the identity blit when the swapchain format is not compatible with the window texture's
+    // (B8G8R8A8_* on Linux WSI). It is the rot path's pipeline, which renders into g_sfmt and needs dynamic rendering.
+    { int conv_fmt = g_sfmt != VK_FORMAT_R8G8B8A8_UNORM && g_sfmt != VK_FORMAT_R8G8B8A8_SRGB;
+      g_conv.on = conv_fmt && V.has_dynrender && rot_setup() ? 1 : 0;
+      if (g_conv.on) VKLOG("swapchain format %d is not blit-compatible with the window texture: the picture is drawn through the conversion pipeline", g_sfmt);
+      else if (conv_fmt) VKRED_ONCE(96, "swapchain format %d needs a conversion draw but its pipeline is unavailable: the blit is format-incompatible", g_sfmt); }
+#endif
     VkSwapchainCreateInfoKHR ci = {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, NULL, 0, g_surf, n, g_sfmt, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, g_next, 1,
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, NULL, g_pre,
         (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR) ? VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR : VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_PRESENT_MODE_FIFO_KHR, 1, VK_NULL_HANDLE};
@@ -905,11 +928,54 @@ static void present_window(vkimg_t *im, const int crop[4], double period, uint64
     int cx = crop ? crop[0] : 0, cy = crop ? crop[1] : 0, cw = crop && crop[2] ? crop[2] : (int)im->w, ch = crop && crop[3] ? crop[3] : (int)im->h;
     double s = fmin((double)g_sext.width / cw, (double)g_sext.height / ch); int dw = (int)(cw * s), dh = (int)(ch * s), dx = ((int)g_sext.width - dw) / 2, dy = ((int)g_sext.height - dh) / 2;
     vk_pic_set((float)dx / g_sext.width, (float)dy / g_sext.height, (float)dw / g_sext.width, (float)dh / g_sext.height);
-    VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, cy, 0}, {cx + cw, cy + ch, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};
-    if (vk_window_bottom_up()) { b.srcOffsets[0].y = cy + ch; b.srcOffsets[1].y = cy; }   // lower-left origin: the window image is stored bottom-up (gfx_vk_exec.c)
+    int bu = vk_window_bottom_up();   // lower-left origin: the window image is stored bottom-up (gfx_vk_exec.c)
     if (im->layout == VK_IMAGE_LAYOUT_UNDEFINED) { barrier(cb, im->img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL); im->layout = VK_IMAGE_LAYOUT_GENERAL; }   // an imported frame buffer, first shown (gl_android.c)
-    vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
     VkImageLayout lay = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+#if defined(DM_ALARM)
+    // Linux WSI: when the swapchain's format is not blit-compatible with the window texture's (B8G8R8A8_*), one fullscreen-triangle
+    // draw with the rot pipeline samples the game's image and writes the swapchain format. The viewport is the picture's rect, so the
+    // black clear above stays as the window's borders; the target goes back to COLOR_ATTACHMENT for the overlay and to PRESENT_SRC below.
+    int conv = !turned && g_conv.on && im->full != VK_NULL_HANDLE;
+    if (!turned && g_conv.on && !conv) VKRED_ONCE(97, "the conversion present has no full view of the window texture: the blit is format-incompatible");
+    if (conv) {
+        if (!g_conv.pool) {   // one set per present slot: the set's previous use is the submit of 8 presents ago, whose fence wait is at the top
+            VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8};
+            VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, NULL, 0, 8, 1, &ps};
+            VKCHK(vkCreateDescriptorPool(V.dev, &pi, NULL, &g_conv.pool));
+            VkDescriptorSetLayout dsl[8]; for (int i = 0; i < 8; i++) dsl[i] = g_rot.dsl;
+            VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, NULL, g_conv.pool, 8, dsl};
+            VKCHK(vkAllocateDescriptorSets(V.dev, &ai, g_conv.set));
+            // the picture is scaled (aspect fit), unlike the pre-rotation copy: linear like the blit it replaces (g_rot.samp is nearest)
+            VkSamplerCreateInfo si = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, NULL, 0, VK_FILTER_LINEAR, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE};
+            VKCHK(vkCreateSampler(V.dev, &si, NULL, &g_conv.samp));
+        }
+        { VkDescriptorImageInfo ii = {g_conv.samp, im->full, VK_IMAGE_LAYOUT_GENERAL};   // set k's previous use was the submit whose fence was waited for above
+          VkWriteDescriptorSet wr = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, g_conv.set[k], 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &ii};
+          vkUpdateDescriptorSets(V.dev, 1, &wr, 0, NULL); }
+        barrier(cb, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        VkRenderingAttachmentInfo ca = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, NULL, tview, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, NULL, VK_IMAGE_LAYOUT_UNDEFINED,
+                                        VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE};
+        VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO, NULL, 0, {{0, 0}, g_sext}, 1, 0, 1, &ca, NULL, NULL};
+        vkCmdBeginRendering(cb, &ri);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_rot.pipe);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_rot.layout, 0, 1, &g_conv.set[k], 0, NULL);
+        VkViewport vp = {(float)dx, (float)dy, (float)dw, (float)dh, 0, 1}; VkRect2D sc = {{0, 0}, g_sext};
+        vkCmdSetViewport(cb, 0, 1, &vp); vkCmdSetScissor(cb, 0, 1, &sc);
+        // The triangle's p in [0,1]^2 maps onto the viewport (the picture's rect); uv = (cx + p.x*cw, cy + p.y*ch) / image size, bottom-up flipped
+        float pc[6] = {(float)cw / im->w, 0, bu ? -(float)ch / im->h : (float)ch / im->h, 0, (float)cx / im->w,
+                       bu ? (float)(cy + ch) / im->h : (float)cy / im->h};
+        vkCmdPushConstants(cb, g_rot.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof pc, pc);
+        vkCmdDraw(cb, 3, 1, 0, 0);
+        vkCmdEndRendering(cb);
+        lay = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else
+#endif
+    {
+        VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, cy, 0}, {cx + cw, cy + ch, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};
+        if (bu) { b.srcOffsets[0].y = cy + ch; b.srcOffsets[1].y = cy; }
+        vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
+    }
     int external = dm_external_active();
     int ovm = external ? 0 : dm_overlay_visible(), menu = external ? -1 : dm_menu_state(), fps = dm_overlay_fps();
     if ((ovm || menu >= 0 || fps) && overlay_ready(cb, k, menu) && (V.has_dynrender || ov_fb(idx))) {   // without dynamic rendering, only with the image's framebuffer
