@@ -102,7 +102,7 @@ def run(cmd, cwd=None, quiet=False):
     return subprocess.run([str(c) for c in cmd], cwd=str(cwd) if cwd else None)
 
 
-def source_set(gfx):
+def source_set(gfx, gl=False):
     """(C sources, assembly sources) of the host build for one graphics backend; every entry is a Path."""
     c = []
     # Host core: everything but the two files the port replaces (Apple-only section / VideoToolbox)
@@ -126,6 +126,8 @@ def source_set(gfx):
     # The port's own layer: ELF libc table + main wrapper + weak platform stubs + the strong platform implementations.
     # These are named explicitly: dm/alarm/*.c also holds the shell binary's front end (front_alarm.c etc.), which is not part of this link.
     c += [HERE / 'hle_table_alarm.c', HERE / 'host_main_alarm.c', HERE / 'stubs_alarm.c']
+    if gl:   # a GL (EGL/GLES) game: the host's OpenGL layer, gl_android.c's Linux port (dlopens libEGL/libGLESv2)
+        c += [HERE / 'gl_alarm.c']
     if (HERE / 'host_glue.c').exists():
         c += [HERE / 'host_glue.c']
     c += sorted((HERE / 'platform').glob('*.c'))
@@ -257,12 +259,13 @@ def main():
     ap.add_argument('--debug', action='store_true', help='print every command and its full output')
     ap.add_argument('--clean', action='store_true', help='remove this backend\'s build directory and output binary first')
     ap.add_argument('--game', default=DEFAULT_GAME, help=f'game profile title ID whose constants are compiled in (default {DEFAULT_GAME})')
+    ap.add_argument('--gl', action='store_true', help='also build the OpenGL/EGL host layer (gl_alarm.c) for a GL game')
     ap.add_argument('-j', type=int, default=min(3, os.cpu_count() or 1), help='parallel compile jobs (default 3: the machine has 8 cores and tight RAM)')
     args = ap.parse_args()
     OUT, OBJ, ASM, BIN = output_paths(args.gfx)
 
     t0 = time.time()
-    print(f'gfx backend: {args.gfx}  ({"null graphics" if args.gfx == "null" else "Vulkan via gfx_vk_* + dm/alarm/gfx_vk_alarm.c"})')
+    print(f'gfx backend: {args.gfx}{" + GL layer" if args.gl else ""}  ({"null graphics" if args.gfx == "null" else "Vulkan via gfx_vk_* + dm/alarm/gfx_vk_alarm.c"})')
     if args.clean:
         shutil.rmtree(OUT, ignore_errors=True)
         try:
@@ -288,7 +291,7 @@ def main():
             return 1
 
     # ---- assembly: Apple (Mach-O) assembly converted to ELF ----
-    c_sources, a_sources = source_set(args.gfx)
+    c_sources, a_sources = source_set(args.gfx, args.gl)
     asm_outputs = []
     asm_jobs = []
     for src in a_sources:
