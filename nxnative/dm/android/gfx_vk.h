@@ -4,10 +4,18 @@
 // Version 1 is correct-first: whole-pipeline barriers between passes, full pipelines with a small dynamic state set, descriptor sets per draw.
 #pragma once
 #define VK_NO_PROTOTYPES
+#if !defined(DM_ALARM)
 #define VK_USE_PLATFORM_ANDROID_KHR
+#endif
 #include <android/hardware_buffer.h>
 #include <android/native_window.h>
 #include <vulkan/vulkan.h>
+#if defined(DM_ALARM)
+// Linux port (nxnative/dm/alarm): the Android-only Vulkan types the backend names (no platform headers in third_party/vulkan-headers)
+// and the SDL3 window/surface glue that replaces ANativeWindow + VkAndroidSurfaceKHR (gfx_vk_alarm.c, GFX_VK_PORT.md)
+#include <android/vulkan_android_compat.h>
+#include "../alarm/gfx_vk_alarm.h"
+#endif
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>

@@ -4,7 +4,9 @@
 // DM_VK_SHOT_DIR (default DM_ROOT), which is how a run without a screen is checked.
 #include "gfx_vk.h"
 #include <android/native_window.h>
+#if !defined(DM_ALARM)
 #include <jni.h>
+#endif
 #include <string.h>
 #include <math.h>
 #include <time.h>
@@ -169,15 +171,40 @@ static int swap_make(void) {
     int ww = ANativeWindow_getWidth(w), wh = ANativeWindow_getHeight(w);
     if (g_swap && ww > 0 && wh > 0 && ((uint32_t)ww != g_sext.width || (uint32_t)wh != g_sext.height)) swap_destroy();
     if (g_swap) return 1;
+    // The Android surface description stays declared before the platform branch: tests/test_vk_present_timing.py cuts this
+    // function at this line to exercise the resize logic without a Vulkan device, so nothing platform-specific may sit
+    // between the function start and here. DM_ALARM does not use it (SDL3 makes the surface).
     VkAndroidSurfaceCreateInfoKHR si = {VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR, NULL, 0, w};
+#if defined(DM_ALARM)
+    (void)si;
+    // Linux: SDL3 creates the surface for the window's window system (Wayland/X11/...): gfx_vk_alarm_create_surface, gfx_vk_alarm.c
+    if (vk_alarm_create_surface(V.inst, &g_surf)) { VKRED_ONCE(95, "no Vulkan surface for the SDL window: nothing is presented"); return 0; }
+#else
     if (vkCreateAndroidSurfaceKHR(V.inst, &si, NULL, &g_surf)) return 0;
+#endif
     VkSurfaceCapabilitiesKHR caps; vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.pd, g_surf, &caps);
     uint32_t nf = 0; vkGetPhysicalDeviceSurfaceFormatsKHR(V.pd, g_surf, &nf, NULL); VkSurfaceFormatKHR sf[32]; if (nf > 32) nf = 32; vkGetPhysicalDeviceSurfaceFormatsKHR(V.pd, g_surf, &nf, sf);
     g_sfmt = sf[0].format; for (uint32_t i = 0; i < nf; i++) if (sf[i].format == VK_FORMAT_R8G8B8A8_UNORM) g_sfmt = sf[i].format;
     for (uint32_t i = 0; i < nf; i++) if (sf[i].format == g_want) g_sfmt = g_want;   // the window texture's sRGB-ness (g_want), so the blit copies its bytes as they are
     if (g_sfmt != g_want) VKRED_ONCE(95, "the surface offers no format %d for the window texture: its picture is %s", g_want, g_want == VK_FORMAT_R8G8B8A8_SRGB ? "darker" : "lighter");
+#if defined(DM_ALARM)
+    // Linux WSI often offers only the B8G8R8A8 family. The identity path blits from the game's RGBA8 window image into the
+    // swapchain image, and vkCmdBlitImage needs format-compatible images: this is a known gap (GFX_VK_PORT.md "Runtime risks"),
+    // fixed in M2.1 by a fullscreen-triangle conversion draw through the rot/overlay pipeline (which renders into g_sfmt anyway).
+    if (g_sfmt != VK_FORMAT_R8G8B8A8_UNORM && g_sfmt != VK_FORMAT_R8G8B8A8_SRGB)
+        VKRED_ONCE(96, "the surface offers no R8G8B8A8 format (using %d): the game picture's blit into it is not format-compatible", g_sfmt);
+#endif
+#if defined(DM_ALARM)
+    // The SDL window's pixel size (compat/android/native_window.h): HiDPI safe, 0 when minimized or hidden
+    g_sext = (VkExtent2D){(uint32_t)ANativeWindow_getWidth(w), (uint32_t)ANativeWindow_getHeight(w)};
+    if ((!g_sext.width || !g_sext.height) && caps.currentExtent.width != 0xffffffffu && caps.currentExtent.height != 0xffffffffu) g_sext = caps.currentExtent;   // 0xffffffff: the surface picks
+    if (!g_sext.width || !g_sext.height) { swap_destroy(); return 0; }   // minimized or hidden: no swapchain until the window is back
+    if (g_sext.width > caps.maxImageExtent.width) g_sext.width = caps.maxImageExtent.width;
+    if (g_sext.height > caps.maxImageExtent.height) g_sext.height = caps.maxImageExtent.height;
+#else
     g_sext = (VkExtent2D){(uint32_t)ANativeWindow_getWidth(w), (uint32_t)ANativeWindow_getHeight(w)};   // the window as it is now; Android's compositor rotates (identity transform)
     if (!g_sext.width || !g_sext.height) g_sext = caps.currentExtent;
+#endif
     uint32_t n = caps.minImageCount < 3 ? 3 : caps.minImageCount; if (caps.maxImageCount && n > caps.maxImageCount) n = caps.maxImageCount;
     int want = 1; { const char *e = getenv("DM_VK_PRETRANSFORM"); if (e && *e) want = atoi(e) != 0; }
     VkSurfaceTransformFlagBitsKHR turn = (VkSurfaceTransformFlagBitsKHR)(caps.currentTransform & (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR));
@@ -497,6 +524,7 @@ static void ov_panel(int st) {   // the pause menu, the text entry or the layout
     else if (st & OVS_ST) ov_save_panel(&cv, st);
     else ov_menu_panel(&cv, st);
 }
+#if !defined(DM_ALARM)
 // The phone window uses the same menu raster as Vulkan, independently of the external swapchain.
 JNIEXPORT jint JNICALL Java_org_nx2a_ExternalActivity_externalMenuState(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_menu_state(); }
 JNIEXPORT jintArray JNICALL Java_org_nx2a_ExternalActivity_externalMenuPixels(JNIEnv *env, jclass cls, jint W, jint H, jint st) {
@@ -520,6 +548,7 @@ JNIEXPORT jintArray JNICALL Java_org_nx2a_ExternalActivity_externalMenuPixels(JN
     if (out) (*env)->SetIntArrayRegion(env, out, 0, (jsize)(count + 2), argb);
     free(argb); free(pixels); return out;
 }
+#endif   // !defined(DM_ALARM)  (the JNI entry points above)
 static void ov_raster(uint8_t *px, uint32_t w, uint32_t h, uint32_t sh) {
     memset(px, 0, (size_t)w * (h + sh) * 4);
     int ts = h > 600 ? 3 : 2;
@@ -1115,12 +1144,24 @@ void mtl_present_wait(uint64_t tk) {   // NVN acquire: the window texture's last
     pthread_mutex_unlock(&g_pq_mu);
 }
 double mtl_presented_time(uint64_t n) { return present_time_get(n); }
-double vk_refresh_ms(void) { return V.has_dtiming && g_pres_recorded && g_refresh_ns ? g_refresh_ns / 1e6 : 0; }   // perf_android.c's late check: the display's refresh, when display times are what it gets
+double vk_refresh_ms(void) {   // perf_android.c's late check: the display's refresh, when display times are what it gets
+    if (V.has_dtiming && g_pres_recorded && g_refresh_ns) return g_refresh_ns / 1e6;
+#if defined(DM_ALARM)
+    { int hz = vk_alarm_refresh_hz(); if (hz > 0) return 1000.0 / hz; }   // no VK_GOOGLE_display_timing on Linux WSI: the SDL display mode's rate
+#endif
+    return 0;
+}
 uint32_t mtl_present_qos(void) { return 0; }
 int mtl_link_active(void) { return 0; }
 int mtl_link_wait_tick(int vsyncs, uint64_t timeout_ns) { (void)vsyncs; (void)timeout_ns; return 0; }
 int mtl_has_window(void) { return dm_front_window() != NULL; }
-int mtl_display_hz(void) { return 60; }
+int mtl_display_hz(void) {
+#if defined(DM_ALARM)
+    int hz = vk_alarm_refresh_hz(); return hz > 0 ? hz : 60;   // the window's display mode (SDL); 60 is the Android fallback
+#else
+    return 60;
+#endif
+}
 int mtl_fps_target(void) { return DM_GAME_FPS_TARGET > 0 ? DM_GAME_FPS_TARGET : 60; }
 // The adaptive frame rate's ceiling (perf_android.c fps_cap_step): the profile's fps_ceiling (30, or 0 for none; Cardfight!! Vanguard Dear Days 2 and Pokémon Mystery Dungeon Rescue Team DX set it), which
 // DM_FPS_CEILING overrides (porter's --fps60 writes 0). A game whose host frame step is on (the rewriter's state page, loader.c dm_fps_state) gets none whatever the key says:

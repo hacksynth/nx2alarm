@@ -115,6 +115,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vk_validation_msg(VkDebugUtilsMessageSever
     return VK_FALSE;
 }
 
+#if !defined(DM_ALARM)
 // Whether a driver offers a Vulkan 1.3 GPU (DM_VK_DRIVER: a Turnip built for another Adreno generation loads and then has none)
 static int drv_has_gpu(PFN_vkGetInstanceProcAddr g) {
     PFN_vkCreateInstance ci = (PFN_vkCreateInstance)g(NULL, "vkCreateInstance"); VkInstance in; int ok = 0;
@@ -130,9 +131,19 @@ static int drv_has_gpu(PFN_vkGetInstanceProcAddr g) {
     if (di) di(in, NULL);
     return ok;
 }
+#endif   // !defined(DM_ALARM)
 
 void vk_init(void) {
     static int done; if (done) return; done = 1;
+#if defined(DM_ALARM)
+    // Linux: the system loader (the loader's SONAME is libvulkan.so.1); a custom ICD is picked with VK_ICD_FILENAMES by the loader itself.
+    // DM_VK_DRIVER/adrenotools is the Android side's out-of-tree driver loader (GFX_VK_PORT.md, "driver loading"): Android-only.
+    void *lib = NULL;
+    if (getenv("DM_VK_DRIVER") && *getenv("DM_VK_DRIVER"))
+        VKLOG("[RED] DM_VK_DRIVER is Android-only (adrenotools): use VK_ICD_FILENAMES for a Linux Vulkan driver; the system's driver is used");
+    if (!(lib = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL))) die("[vk] libvulkan.so.1: %s", dlerror());
+    p_vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(lib, "vkGetInstanceProcAddr");
+#else
     // DM_VK_DRIVER=<library>: a Vulkan driver the APK carries (Mesa's Turnip for Adreno; porter --vulkan-driver), loaded through libadrenotools (BSD-2-Clause), which the
     // APK carries beside it with its hook libraries: a second copy of the system's loader in a linker namespace of its own, whose driver is this library. The loader keeps
     // making the surface and the swapchain, which Turnip on Android has none of (the platform loader makes them over VK_ANDROID_native_buffer). TOTKDroid, a port of Tears
@@ -157,15 +168,25 @@ void vk_init(void) {
         if (!(lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL))) die("[vk] libvulkan.so: %s", dlerror());
         p_vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(lib, "vkGetInstanceProcAddr");
     }
+#endif   // defined(DM_ALARM)
     vkCreateInstance = (PFN_vkCreateInstance)p_vkGetInstanceProcAddr(NULL, "vkCreateInstance");
-    const char *iext[] = {"VK_KHR_surface", "VK_KHR_android_surface", "VK_EXT_debug_utils"};
     VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, NULL, "dmhost", 1, "nxnative", 1, VK_API_VERSION_1_3};
     // DM_VK_VALIDATE=1: Khronos's validation layer, which the APK carries only when built with it (mkapk.py --extra-so); its messages go to the log
     int validate = getenv("DM_VK_VALIDATE") && atoi(getenv("DM_VK_VALIDATE"));
     const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
-    VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, NULL, 0, &app, validate ? 1u : 0u, layers, validate ? 3u : 2u, iext};
+#if defined(DM_ALARM)
+    // Linux: no VK_KHR_android_surface. VK_KHR_surface plus the window system's extensions SDL asks for (Wayland/X11/...):
+    // gfx_vk_alarm_instance_exts, gfx_vk_alarm.c. Without a video driver only VK_KHR_surface is asked for and the backend is headless.
+    const char *iext[10]; uint32_t niext = 0;
+    { int nsdl = vk_alarm_instance_exts(iext, 8); if (nsdl > 0) niext = (uint32_t)nsdl; else iext[niext++] = "VK_KHR_surface"; }
+    if (validate) iext[niext++] = "VK_EXT_debug_utils";   // for the layer's messages only; dropped again when the layer cannot start (below)
+#else
+    const char *iext[] = {"VK_KHR_surface", "VK_KHR_android_surface", "VK_EXT_debug_utils"};
+    uint32_t niext = validate ? 3u : 2u;
+#endif
+    VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, NULL, 0, &app, validate ? 1u : 0u, layers, niext, iext};
     VkResult ir = vkCreateInstance(&ici, NULL, &V.inst);
-    if (ir && validate) { VKLOG("[RED] validation layer not available (%d): running without it", ir); validate = 0; ici.enabledLayerCount = 0; ici.enabledExtensionCount = 2; ir = vkCreateInstance(&ici, NULL, &V.inst); }
+    if (ir && validate) { VKLOG("[RED] validation layer not available (%d): running without it", ir); validate = 0; ici.enabledLayerCount = 0; ici.enabledExtensionCount = niext - 1; ir = vkCreateInstance(&ici, NULL, &V.inst); }
     VKCHK(ir);
     if (validate) {
         PFN_vkCreateDebugUtilsMessengerEXT mk = (PFN_vkCreateDebugUtilsMessengerEXT)p_vkGetInstanceProcAddr(V.inst, "vkCreateDebugUtilsMessengerEXT");
@@ -189,9 +210,17 @@ void vk_init(void) {
     if (V.qf == qn) die("[vk] no graphics + compute queue");
     uint32_t ne = 0; vkEnumerateDeviceExtensionProperties(V.pd, NULL, &ne, NULL);
     VkExtensionProperties *ex = calloc(ne, sizeof *ex); vkEnumerateDeviceExtensionProperties(V.pd, NULL, &ne, ex);
+#if defined(DM_ALARM)
+    // Linux: no VK_ANDROID_external_memory_android_hardware_buffer / VK_EXT_queue_family_foreign (the zero-copy AHardwareBuffer pools are
+    // refused by compat/android/hardware_buffer.h and run as copied pools; GFX_VK_PORT.md "Memory pools" and M2.1)
+    const char *want[] = {"VK_KHR_swapchain", "VK_EXT_custom_border_color",
+                          "VK_EXT_robustness2", "VK_EXT_depth_clip_control", "VK_EXT_provoking_vertex", "VK_EXT_index_type_uint8", "VK_EXT_transform_feedback",
+                          "VK_GOOGLE_display_timing"};
+#else
     const char *want[] = {"VK_KHR_swapchain", "VK_ANDROID_external_memory_android_hardware_buffer", "VK_EXT_queue_family_foreign", "VK_EXT_custom_border_color",
                           "VK_EXT_robustness2", "VK_EXT_depth_clip_control", "VK_EXT_provoking_vertex", "VK_EXT_index_type_uint8", "VK_EXT_transform_feedback",
                           "VK_GOOGLE_display_timing"};
+#endif
     const char *on[64]; uint32_t non = 0;
     for (unsigned i = 0; i < sizeof want / sizeof *want; i++) if (has_ext(ex, ne, want[i])) on[non++] = want[i]; else VKLOG("device has no %s", want[i]);
     // NVN vertex streams step per N instances (gfx_vk_exec.c build_pipeline's divisor state): VK_EXT_vertex_attribute_divisor, or the KHR one (core in Vulkan 1.4, the same
