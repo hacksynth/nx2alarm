@@ -37,3 +37,11 @@ static inline int pthread_cond_timedwait_relative_np(pthread_cond_t *c, pthread_
     return pthread_cond_timedwait(c, m, &t);
 }
 #define MACH_PORT_NULL 0
+// glibc has no reverse of pthread_mach_thread_np (Darwin's pthread_from_mach_thread_np): a thread port is a Linux TID, and
+// pthread.h has no way back to a pthread_t. The host uses it only to name a thread in crash / thread dumps (crash.c
+// crash_thread_name), so the calling thread names itself when it is the one asked about and any other port reports no name.
+// Bionic and Apple are untouched.
+#if !defined(__ANDROID__) && defined(__GLIBC__)
+static inline pthread_t dm_pthread_from_mach_thread_np(unsigned t) { return t == (unsigned)gettid() ? pthread_self() : (pthread_t)0; }
+#define pthread_from_mach_thread_np dm_pthread_from_mach_thread_np
+#endif
