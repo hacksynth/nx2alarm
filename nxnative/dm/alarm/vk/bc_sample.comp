@@ -1,0 +1,10 @@
+#version 450
+// M2 BC decode probe: sample one 4x4 BC block (texel 0,0) and write it to a storage buffer.
+// 4x4 texture, normalized coordinate 0.125 = the centre of texel (0,0).
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(binding = 0) uniform sampler2D uTex;
+layout(binding = 1, std430) writeonly buffer Out { vec4 texel; } outBuf;
+
+void main() {
+    outBuf.texel = texture(uTex, vec2(0.125, 0.125));
+}

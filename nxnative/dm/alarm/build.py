@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-# nx2alarm shell build: a native aarch64 Linux binary built with gcc and the
-# system SDL3 (pkg-config sdl3), no Android NDK, no .NET, no Vulkan link.
+# nx2alarm shell/tool build: native aarch64 Linux binaries built with gcc and the
+# system SDL3 (pkg-config sdl3), no Android NDK, no .NET.
 #
 #   python3 nxnative/dm/alarm/build.py --target shell
+#       -> build/alarm/nx2alarm    (the shell + doctor; SDL3 only)
+#   python3 nxnative/dm/alarm/build.py --target vk-smoke
+#       -> build/alarm/nx2alarm-vk (M2 hardware test: info/smoke/bc; links -lvulkan)
 #
-# Output: build/alarm/nx2alarm. Objects go to build/alarm/obj-shell and are
-# rebuilt when a source, a header it includes (gcc -MMD) or the flags change.
-# --jobs N limits the parallelism (default 4: this machine has little free RAM),
-# --clean removes the shell objects and binary (the host binary of build_host.py
-# is left alone), --debug switches to -O0 -g3.
+# Objects go to build/alarm/obj-<target> and are rebuilt when a source, a header
+# it includes (gcc -MMD) or the flags change. --jobs N limits the parallelism
+# (default 4: this machine has little free RAM), --clean removes this target's
+# objects and binary (the other target and build_host.py's binaries are left
+# alone), --debug switches to -O0 -g3.
 #
-# The shell sources are exactly entry_alarm.c, front_alarm.c and doctor.c.
-# They include the bitmap fonts of nxnative/dm/android (pixel_font*.h) and the
-# host front-end header of nxnative/dm/host (front.h). No game profile header is
-# generated: the shell does not depend on a game.
+# The shell sources are entry_alarm.c, front_alarm.c and doctor.c. They include
+# the bitmap fonts of nxnative/dm/android (pixel_font*.h) and the host front-end
+# header of nxnative/dm/host (front.h). No game profile header is generated.
+# The vk-smoke target is vk_smoke.c plus the BC compute shader compiled by glslc
+# into build/alarm/vk/gen/bc_sample_comp.spv.h; it includes the repo's Vulkan
+# headers through nxnative/dm/alarm/compat/vulkan/vulkan.h.
 import argparse
 import concurrent.futures as cf
 import hashlib
@@ -29,10 +34,11 @@ REPO = ALARM.parents[2]                          # repository root
 
 SOURCES = ["entry_alarm.c", "front_alarm.c", "doctor.c"]
 
-ap = argparse.ArgumentParser(description="Build the nx2alarm shell (gcc + system SDL3).")
-ap.add_argument("--target", default="shell", choices=("shell",), help="what to build (only 'shell' for M1)")
+ap = argparse.ArgumentParser(description="Build the nx2alarm shell or the M2 Vulkan test tool.")
+ap.add_argument("--target", default="shell", choices=("shell", "vk-smoke"),
+                help="shell (M1) or vk-smoke (M2 Vulkan hardware test)")
 ap.add_argument("--jobs", type=int, default=4, help="parallel compiles (default 4, keep it low)")
-ap.add_argument("--clean", action="store_true", help="remove the shell objects and binary first")
+ap.add_argument("--clean", action="store_true", help="remove this target's objects and binary first")
 ap.add_argument("--debug", action="store_true", help="debug build: -O0 -g3 instead of -O2")
 ap.add_argument("--out", default=None, help="output directory (default build/alarm)")
 ap.add_argument("--cc", default=os.environ.get("CC", "gcc"), help="C compiler (default gcc)")
@@ -43,8 +49,14 @@ if args.jobs < 1:
     sys.exit("build.py: --jobs must be at least 1")
 
 out_dir = Path(args.out) if args.out else REPO / "build" / "alarm"
-obj_dir = out_dir / "obj-shell"
-exe = out_dir / "nx2alarm"
+if args.target == "shell":
+    SOURCES = ["entry_alarm.c", "front_alarm.c", "doctor.c"]
+    obj_dir = out_dir / "obj-shell"
+    exe = out_dir / "nx2alarm"
+else:
+    SOURCES = ["vk_smoke.c"]
+    obj_dir = out_dir / "obj-vk"
+    exe = out_dir / "nx2alarm-vk"
 
 
 def fail(message):
@@ -93,13 +105,47 @@ CFLAGS = [
 if args.debug:
     CFLAGS += ["-g3", "-fno-omit-frame-pointer"]
 
-INCLUDES = [
-    f"-I{ALARM}",
-    f"-I{ALARM.parent / 'android'}",   # pixel_font.h, pixel_font_latin1.h
-    f"-I{ALARM.parent / 'host'}",      # front.h
-]
+VULKAN_INCLUDE = ALARM.parent / "third_party" / "vulkan-headers" / "include"
+if args.target == "shell":
+    INCLUDES = [
+        f"-I{ALARM}",
+        f"-I{ALARM.parent / 'android'}",   # pixel_font.h, pixel_font_latin1.h
+        f"-I{ALARM.parent / 'host'}",      # front.h
+    ]
+    LINK_FLAGS = ["-o", str(exe)] + sdl_libs + ["-ldl", "-lm"]
+else:
+    gen_dir = out_dir / "vk" / "gen"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    glslc = shutil.which("glslc")
+    if not glslc:
+        fail("glslc is missing (Arch: pacman -S shaderc); the BC probe shader cannot be built")
+    for shader in sorted((ALARM / "vk").glob("*.*")):
+        stem, stage = shader.stem, shader.suffix.lstrip(".")
+        header = gen_dir / f"{stem}_{stage}.spv.h"
+        if header.exists() and header.stat().st_mtime >= shader.stat().st_mtime:
+            continue
+        spv = out_dir / "vk" / f"{shader.name}.spv"
+        result = subprocess.run([glslc, "--target-env=vulkan1.2", "-O", str(shader), "-o", str(spv)],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            fail(f"glslc {shader.name}: {result.stderr.strip()}")
+        import struct
+        data = spv.read_bytes()
+        words = struct.unpack(f"<{len(data) // 4}I", data)
+        body = ", ".join(f"{w:#010x}" for w in words)
+        header.write_text(f"// generated from nxnative/dm/alarm/vk/{shader.name} by glslc (build.py)\n"
+                          f"static const uint32_t {stem}_{stage}_spv[] = {{{body}}};\n")
+        spv.unlink()
+    INCLUDES = [
+        f"-I{ALARM}",
+        f"-I{ALARM / 'compat'}",            # <vulkan/vulkan.h> umbrella for the repo headers
+        f"-I{VULKAN_INCLUDE}",              # vulkan_core.h
+        f"-I{gen_dir}",                     # generated shader headers
+    ]
+    CFLAGS += ["-Wno-missing-field-initializers"]   # Vulkan aggregates are habitually partially initialised
+    LINK_FLAGS = ["-o", str(exe)] + sdl_libs + ["-lvulkan", "-ldl", "-lm"]
+
 CFLAGS += INCLUDES
-LINK_FLAGS = ["-o", str(exe)] + sdl_libs + ["-ldl", "-lm"]
 
 # Flag changes rebuild every object: make's style would leave stale objects.
 stamp = obj_dir / "flags.stamp"
@@ -141,7 +187,7 @@ def compile_source(name):
     return name, obj, result.returncode, result.stderr, True
 
 
-print(f"build.py: target shell, {len(SOURCES)} source(s), -j{args.jobs}")
+print(f"build.py: target {args.target}, {len(SOURCES)} source(s), -j{args.jobs}")
 print(f"  compiler : {gcc_line}")
 print(f"  SDL3     : {sdl_version} ({' '.join(sdl_cflags) or 'default include path'})")
 print(f"  output   : {exe}")

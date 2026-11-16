@@ -34,6 +34,10 @@ void dm_alarm_usage(FILE *out, const char *argv0) {
     fprintf(out, "  version    print the nx2alarm, compiler and SDL3 versions\n");
     fprintf(out, "  help       print this text\n");
     fprintf(out, "\n");
+    fprintf(out, "M2 hardware test (separate binary): build with build.py --target vk-smoke\n");
+    fprintf(out, "  nx2alarm-vk info | bc | smoke [--frames N] [--screenshot FILE] [--format bgra|rgba]\n");
+    fprintf(out, "  see docs/M2_VERIFICATION.md\n");
+    fprintf(out, "\n");
     fprintf(out, "shell options:\n");
     fprintf(out, "  --headless          no video: print the device summary and exit 0\n");
     fprintf(out, "  --frames N          render N frames and exit (0 or absent: run until quit)\n");
