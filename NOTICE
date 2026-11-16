@@ -1,0 +1,24 @@
+nx2alarm — NOTICE
+
+nx2alarm is a fork of nx2android (https://github.com/shirai91/nx2android), which is the
+Android port of nxnative (https://github.com/seedds/nxnative). Both are MIT-licensed; the
+upstream license text is reproduced in LICENSE and nxnative/LICENSE. The Android target is
+kept in this repository; see docs/UPSTREAM_README_nx2android.md for the upstream README.
+
+Upstream projects and the code this fork builds on:
+
+- nx2android (MIT) — Android port, porter pipeline, Android runtime, game profiles, docs.
+- nxnative (MIT, Copyright (c) 2026 seedds) — the native Switch host engine, HLE, NVN layer,
+  rewriter, shader pipeline and the Apple front ends. This repository's nxnative/ tree is the
+  nx2android fork of it.
+- Ryujinx (MIT) — shader translator (nxnative/dm/third_party/ryujinx) and common code.
+- zstd, libvpx, stb_vorbis, Vulkan-Headers, libadrenotools, bcdec, fusion-pixel-font and the
+  other bundled third-party components under nxnative/dm/third_party/ keep their own licenses
+  and copyright notices.
+
+The Arch Linux ARM platform layer (nxnative/dm/alarm/, docs/ALARM_*.md, docs/PORTING_PLAN.md,
+docs/FEASIBILITY.md, docs/M1_VERIFICATION.md) is new in this fork and is released under the
+same MIT license as the rest of the project.
+
+No game files, keys or anything extracted from them are included. Do not commit your own
+prod.keys or game dumps to this repository.

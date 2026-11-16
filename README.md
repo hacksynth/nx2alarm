@@ -1,105 +1,113 @@
-<h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <img alt="nx2android" src="docs/images/logo.svg" height="140">
-  </picture>
-</h1>
+# nx2alarm
 
-Port your own Nintendo Switch games to Android, natively: the game's own arm64 code runs on the device, with the Switch's system services stood in for by a host and NVN graphics replayed on Vulkan. Pick the game's folder, click **Port**, and get an APK plus the game's data, installed on your device if you like. Bring your own game files and keys; nothing from any game is in this repository.
+**Native Nintendo Switch game ports for Arch Linux ARM** — a compatibility layer that runs
+the game's own arm64 code on an aarch64 Linux device, replaces the Switch's system services
+with a host layer, and replays NVN graphics on Vulkan.
 
-This is the Android port of [nxnative](https://github.com/seedds/nxnative), which does the same on iPhone and iPad. Supported games: [Games](#games).
+nx2alarm is a fork of **[nx2android](https://github.com/shirai91/nx2android)** (the Android
+port of **[nxnative](https://github.com/seedds/nxnative)**, which does the same on Apple
+devices). The engine — guest loader, Horizon HLE, NVN replay, rewriter, shader pipeline, game
+profiles — is reused. The **platform layer is new**: SDL3 window/input/audio instead of
+Android's NativeActivity/APK/AAudio/MediaCodec, and native aarch64 builds with gcc instead of
+the Android NDK. The target device is a Huawei MateBook E 2019 (Snapdragon 850 / Adreno 630)
+running Arch Linux ARM.
 
-## Games
+> **Status: M1 — shell + native host compile, delivered (2026-11-16).** This checkout does
+> **not** play games yet. What works today on the target device (verified, see
+> [`docs/M1_VERIFICATION.md`](docs/M1_VERIFICATION.md)):
+>
+> - `nx2alarm doctor` — device/prerequisite audit on Arch Linux ARM: 14 PASS / 5 WARN / 0 FAIL;
+>   the WARNs are the real next prerequisites (Vulkan ICD missing, no dma-buf heap, no game data);
+> - `nx2alarm shell` — a native SDL3 window shell with the audit rendered on screen (Wayland,
+>   OpenGL renderer, screenshot mode, headless mode): 75 KiB binary, no Android tooling,
+>   no Vulkan ICD needed;
+> - `nx2alarm-host` — the upstream nxnative host core (182 C + 3 asm sources: Horizon HLE + NVN
+>   layer + null graphics backend) compiled natively with gcc for aarch64 Linux and linked
+>   without Android libraries: 7.7 MiB, starts and prints the upstream usage message;
+> - the Linux platform layer (SDL3 audio, XDG saves, LAN, haptics, perf, assets) and a
+>   compile-checked port of the Vulkan backend's surface/present and memory-pool edges
+>   (9/9 sources with `-DDM_ALARM`), with no runtime test possible until a Vulkan ICD is installed.
+>
+> ![nx2alarm shell on the MateBook E 2019](docs/images/nx2alarm-shell.png)
+>
+> Not yet: `porter` producing Linux ports, real gameplay, movies, on-screen gamepad. No game
+> files, keys, Android NDK, .NET SDK or Vulkan ICD are present on the target machine, so M1
+> stops at the shell and the host bootstrap. The path to playable games is in
+> [`docs/PORTING_PLAN.md`](docs/PORTING_PLAN.md).
 
-These games play on Android. Tested on a Lenovo Legion Y700 (Snapdragon 8 Elite, Adreno 830), unless a game names another device. The device's GPU must read BC-compressed textures (Adreno, Xclipse; not Mali or PowerVR).
+Read the plan: [`docs/PORTING_PLAN.md`](docs/PORTING_PLAN.md) ·
+[`docs/ALARM_PORT.md`](docs/ALARM_PORT.md) (M1 contract) ·
+[`docs/M1_VERIFICATION.md`](docs/M1_VERIFICATION.md) (M1 evidence) ·
+[`docs/ALARM_ARCHITECTURE.md`](docs/ALARM_ARCHITECTURE.md) ·
+[`docs/FEASIBILITY.md`](docs/FEASIBILITY.md) (device audit) ·
+[`nxnative/dm/alarm/GFX_VK_PORT.md`](nxnative/dm/alarm/GFX_VK_PORT.md) (M2 Vulkan map).
 
-| | |
-|:---:|:---:|
-| ![13 Sentinels: Aegis Rim](docs/images/13-sentinels.jpg)<br>13 Sentinels: Aegis Rim<br><sub>`v0.1.3` · update 1.10 · 60 fps</sub> | ![Advance Wars 1+2: Re-Boot Camp](docs/images/advance-wars-1-2-re-boot-camp.jpg)<br>Advance Wars 1+2: Re-Boot Camp<br><sub>`v0.1.3` · base game 1.0.0 · 60 fps (30 in battle on Switch)</sub> |
-| ![Animal Crossing: New Horizons](docs/images/animal-crossing-new-horizons.jpg)<br>Animal Crossing: New Horizons<br><sub>`v0.4.0` · update 3.0.3 · 30 fps (as on Switch) · local play over Wi-Fi with Switches that run ldn_mitm (Atmosphère 1.11.2 needs ldn_mitm 1.21.2)</sub> | ![Blasphemous 2](docs/images/blasphemous-2.jpg)<br>Blasphemous 2<br><sub>`v0.1.3` · update 1.0.8 · 60 fps</sub> |
-| ![Captain Toad: Treasure Tracker](docs/images/captain-toad-treasure-tracker.jpg)<br>Captain Toad: Treasure Tracker<br><sub>`v0.1.3` · update 1.4.2 · 60 fps</sub> | ![Cardfight!! Vanguard Dear Days 2](docs/images/cardfight-vanguard-dear-days-2.jpg)<br>Cardfight!! Vanguard Dear Days 2<br><sub>`v0.4.0` · update 1.7.2 · 30 fps, 60 with the 60 fps box · tested on the AYN Odin 2 with a Turnip driver</sub> |
-| ![Castlevania: Belmont's Curse](docs/images/castlevania-belmonts-curse.jpg)<br>Castlevania: Belmont's Curse<br><sub>`v0.2.0` · update 1.1.0 · 60 fps</sub> | ![Celeste](docs/images/celeste.jpg)<br>Celeste<br><sub>`v0.1.3` · update 1.4.1.1 · 60 fps</sub> |
-| ![Dark Souls: Remastered](docs/images/dark-souls-remastered.jpg)<br>Dark Souls: Remastered<br><sub>`v0.4.0` · update 1.0.3 · 30 fps</sub> | ![Disco Elysium - The Final Cut](docs/images/disco-elysium-the-final-cut.jpg)<br>Disco Elysium - The Final Cut<br><sub>`v0.4.0` · base game 1.0.7 · 30 fps (as on Switch) · tested on the Sony XQ-DQ72 and the OnePlus 15</sub> |
-| ![Donkey Kong Country Returns HD](docs/images/donkey-kong-country-returns-hd.jpg)<br>Donkey Kong Country Returns HD<br><sub>`v0.1.3` · update 1.1.0 · 60 fps</sub> | ![Final Fantasy Resonance](docs/images/final-fantasy-resonance.jpg)<br>Final Fantasy Resonance<br><sub>`v0.4.0` · update 1.0.1 · 60 fps</sub> |
-| ![Fire Emblem Engage](docs/images/fire-emblem-engage.jpg)<br>Fire Emblem Engage<br><sub>`v0.4.0` · update 2.0.0 · 60 fps (30 on Switch) · tested on the AYN Thor (Adreno 740) with a Turnip Vulkan driver; Qualcomm's own driver mis-draws Engage Attacks (#122)</sub> | ![FM24 Touch](docs/images/fm24-touch.jpg)<br>FM24 Touch<br><sub>`v0.4.0` · update 1.0.1 · 60 fps · OpenGL ES · touch or controller</sub> |
-| ![Football Manager 26 Touch](docs/images/football-manager-26-touch.jpg)<br>Football Manager 26 Touch<br><sub>`v0.4.0` · update 1.0.2 · 30 fps (as on Switch) · played by touch · port with a Turnip Vulkan driver (the crowd glitches on Qualcomm's driver)</sub> | ![Graveyard Keeper 2](docs/images/graveyard-keeper-2.jpg)<br>Graveyard Keeper 2<br><sub>`v0.1.2` · update 1.0.4 · 60 fps (30 on Switch)</sub> |
-| ![Hades II](docs/images/hades-ii.jpg)<br>Hades II<br><sub>`v0.1.2` · update 1.0 · 60 fps</sub> | ![Hollow Knight: Silksong](docs/images/hollow-knight-silksong.jpg)<br>Hollow Knight: Silksong<br><sub>`v0.1.3` · update 1.0.30000 · 60 fps</sub> |
-| ![Kirby and the Forgotten Land](docs/images/kirby-and-the-forgotten-land.jpg)<br>Kirby and the Forgotten Land<br><sub>`v0.4.0` · update 1.1.0 · 30 fps (as on Switch) · tested on the AYN Thor (Adreno 740) with a Turnip Vulkan driver</sub> | ![Kirby's Return to Dream Land Deluxe](docs/images/kirbys-return-to-dream-land-deluxe.jpg)<br>Kirby's Return to Dream Land Deluxe<br><sub>`v0.4.0` · 60 fps · tested on the AYN Thor (Adreno 740) with a Turnip Vulkan driver · needs your console's firmware for its fonts (`--firmware`)</sub> |
-| ![Lonely Mountains: Downhill](docs/images/lonely-mountains-downhill.png)<br>Lonely Mountains: Downhill<br><sub>`v0.3.0` · base game 1.0.5 · 60 fps on Retroid Pocket 6 with PurpleVK · **work in progress**: brief transition glitch and occasional black/white flashes</sub> | ![Mario vs. Donkey Kong](docs/images/mario-vs-donkey-kong.jpg)<br>Mario vs. Donkey Kong<br><sub>`v0.1.3` · update 1.0.1 · 60 fps</sub> |
-| ![Mega Man Battle Network Legacy Collection Vol. 1](docs/images/mega-man-battle-network-legacy-collection-vol-1.jpg)<br>Mega Man Battle Network Legacy Collection Vol. 1<br><sub>`v0.4.0` · update 1.0.2 · 60 fps, held · tested on the AYN Odin 2 (Adreno 740) with a Turnip Vulkan driver (Qualcomm's driver crashes or runs at 30) · Battle Network 1, 2 and 3 played: saves, battles, maps, gallery · the launcher's menus draw fully from the second port with the device connected after a first run (it builds some shaders at run time)</sub> | ![Mega Man Battle Network Legacy Collection Vol. 2](docs/images/mega-man-battle-network-legacy-collection-vol-2.jpg)<br>Mega Man Battle Network Legacy Collection Vol. 2<br><sub>`v0.4.0` · update 1.0.3 · 60 fps, held · tested on the AYN Odin 2 (Adreno 740) with a Turnip Vulkan driver · Battle Network 4, 5 and 6 played: saving, loading, battles, gallery · the launcher's menus draw fully from the second port with the device connected after a first run (it builds some shaders at run time)</sub> |
-| ![Metroid Dread](docs/images/metroid-dread.jpg)<br>Metroid Dread<br><sub>`v0.3.0` · update 2.1.0 · 60 fps</sub> | ![NEO: The World Ends with You](docs/images/neo-the-world-ends-with-you.jpg)<br>NEO: The World Ends with You<br><sub>`v0.1.2` · update 1.03</sub> |
-| ![OCTOPATH TRAVELER 0](docs/images/octopath-traveler-0.jpg)<br>OCTOPATH TRAVELER 0<br><sub>`v0.4.0` · update 1.0.5 · 60 fps · tested on the AYN Thor (Adreno 740) with a Turnip Vulkan driver</sub> | ![OCTOPATH TRAVELER 0 (Chinese release)](docs/images/octopath-traveler-0-chinese.jpg)<br>OCTOPATH TRAVELER 0 (Chinese release)<br><sub>`v0.4.0` · update 1.0.5 · 60 fps · the Chinese and Korean release · tested on the Xiaomi 23117RK66C (Android 16) · port with Game language: Chinese (Simplified) (`--language zh-Hans`)</sub> |
-| ![Paper Mario: The Origami King](docs/images/paper-mario-the-origami-king.jpg)<br>Paper Mario: The Origami King<br><sub>`v0.2.0` · update 1.0.1 · 60 fps (30 on Switch)</sub> | ![Paper Mario: The Thousand-Year Door](docs/images/paper-mario-the-thousand-year-door.jpg)<br>Paper Mario: The Thousand-Year Door<br><sub>`v0.2.0` · update 1.0.1 · 60 fps (30 on Switch) · **work in progress**: playable, but lighting flickers (walls go black for single frames after a fall)</sub> |
-| ![Picross S+](docs/images/picross-s-plus.png)<br>Picross S+<br><sub>`v0.3.0` · update 1.0.1 · Retroid Pocket 6 / PurpleVK · menu and puzzle verified; **Mali rendering issues**</sub> | ![Pokémon Brilliant Diamond](docs/images/pokemon-brilliant-diamond.jpg)<br>Pokémon Brilliant Diamond<br><sub>`v0.4.0` · update 1.3.0 · 60 fps (30 on Switch) · tested on the AYN Thor (Adreno 740) with a Turnip Vulkan driver</sub> |
-| ![Pokémon Legends: Arceus](docs/images/pokemon-legends-arceus.jpg)<br>Pokémon Legends: Arceus<br><sub>`v0.4.0` · update 1.1.1 · 30 fps (as on Switch) · tested on the AYN Thor (Adreno 740) with a Turnip Vulkan driver</sub> | ![Pokémon Legends: Z-A](docs/images/pokemon-legends-z-a.jpg)<br>Pokémon Legends: Z-A<br><sub>`v0.3.0` · update 2.0.2 · 30 fps (as on Switch) · **tested to Lumiose station**: the city and battles not checked yet</sub> |
-| ![Pokémon Mystery Dungeon Rescue Team DX](docs/images/pokemon-mystery-dungeon-rescue-team-dx.jpg)<br>Pokémon Mystery Dungeon Rescue Team DX<br><sub>`v0.4.0` · update 1.0.2 · 30 fps (as on Switch), 60 with the 60 fps option · tested on the AYN Odin 2 (Adreno 740) with a Turnip Vulkan driver</sub> | ![Pokémon Scarlet](docs/images/pokemon-scarlet.jpg)<br>Pokémon Scarlet<br><sub>`v0.4.0` · update 4.0.0 · 50–60 fps (30 on Switch) · tested on the AYN Thor (Adreno 740) with a Turnip Vulkan driver · **work in progress**: tested in the opening and the South Province fields</sub> |
-| ![Pokémon Shield](docs/images/pokemon-shield.jpg)<br>Pokémon Shield<br><sub>`v0.4.0` · update 1.3.2 · 30 fps (as on Switch; 60 runs the game twice as fast) · tested on the AYN Odin 2 (Adreno 740) with a Turnip Vulkan driver · **tested to Postwick** and in wild battles</sub> | ![Pokémon Sword](docs/images/pokemon-sword.jpg)<br>Pokémon Sword<br><sub>`v0.4.0` · update 1.3.2 · 30 fps (as on Switch; 60 runs the game twice as fast) · tested on the AYN Odin 2 (Adreno 740) with a Turnip Vulkan driver · **tested to the Wild Area**, wild battles included; handheld mode draws blurred (docked is the default)</sub> |
-| ![Rhythm Heaven Groove](docs/images/rhythm-heaven-groove.jpg)<br>Rhythm Heaven Groove<br><sub>`v0.4.0` · base game 1.0.0 · 60 fps · tested on the Xiaomi 15 (Adreno 830)</sub> | ![South Park: The Stick of Truth](docs/images/south-park-the-stick-of-truth.jpg)<br>South Park: The Stick of Truth<br><sub>`v0.3.1` · base game 1.0.0 · 30 fps · a Vulkan 1.3 driver is needed (Turnip packed on the Adreno 640)</sub> |
-| ![Super Mario 3D World + Bowser's Fury](docs/images/super-mario-3d-world-bowsers-fury.jpg)<br>Super Mario 3D World + Bowser's Fury<br><sub>`v0.4.0` · update 1.2.2 · 60 fps · tested on the AYN Thor (Adreno 740) with a Turnip Vulkan driver</sub> | ![Super Mario Bros. Wonder](docs/images/super-mario-bros-wonder.jpg)<br>Super Mario Bros. Wonder<br><sub>`v0.1.3` · update 1.2.1 · 60 fps, dips to 40</sub> |
-| ![Super Mario Odyssey](docs/images/super-mario-odyssey.jpg)<br>Super Mario Odyssey<br><sub>`v0.2.0` · update 1.4.1 · 60 fps · shake the device to throw Cappy</sub> | ![Tales of Eternia Remastered](docs/images/tales-of-eternia-remastered.jpg)<br>Tales of Eternia Remastered<br><sub>`v0.1.2` · update 2.0.0 · 60 fps</sub> |
-| ![The Legend of Zelda: Breath of the Wild](docs/images/the-legend-of-zelda-breath-of-the-wild.jpg)<br>The Legend of Zelda: Breath of the Wild<br><sub>`v0.4.0` · update 1.9.0 · 60 fps in the open world and shrines; about 30 in the busiest villages, which hold 60 while the phone is cool (30 on Switch) · the profile turns on `DM_GPU_TURBO=1` (the GPU at its highest clock: the phone runs hot, 67-76 °C; `DM_GPU_TURBO=0` in env.txt turns it off) · tested on the Galaxy S25 Ultra (Adreno 830) with Turnip (Stable Turnip v2, Mesa 26.2.3) · **work in progress**: tested on the Great Plateau, in shrines, villages and teleports</sub> | ![The Legend of Zelda: Echoes of Wisdom](docs/images/zelda-echoes-of-wisdom-rp6.png)<br>The Legend of Zelda: Echoes of Wisdom<br><sub>`v0.3.0` · version 1.1.0 · playable on Retroid Pocket 6 with PurpleVK · **work in progress**: minor transparency artifacts around rifts</sub> |
-| ![The Legend of Zelda: Tears of the Kingdom](docs/images/the-legend-of-zelda-tears-of-the-kingdom.jpg)<br>The Legend of Zelda: Tears of the Kingdom<br><sub>`v0.3.0` · update 1.4.3 · 30 fps, 60 in caves and shrines · smoothest with a Turnip Vulkan driver · **work in progress**: 60 fps in the open world</sub> | ![The World Ends with You -Final Remix-](docs/images/the-world-ends-with-you-final-remix.jpg)<br>The World Ends with You -Final Remix-<br><sub>`v0.4.0` · base game 1.0.0 · 60 fps · played by touch</sub> |
-| ![Tomodachi Life: Living the Dream](docs/images/tomodachi-life-living-the-dream.jpg)<br>Tomodachi Life: Living the Dream<br><sub>`v0.4.0` · update 1.0.4 · 60 fps</sub> | ![Ultra Kaiju Monster Rancher](docs/images/ultra-kaiju-monster-rancher.jpg)<br>Ultra Kaiju Monster Rancher<br><sub>`v0.4.0` · update 1.0.1 · 30 fps (60 runs the game twice as fast) · tested on the AYN Odin 2 (Adreno 740) with a Turnip Vulkan driver · handheld 3D resolution by default, docked in the app menu · tested through the tutorials and battles</sub> |
-| ![UNDER NIGHT IN-BIRTH Exe:Late[cl-r]](docs/images/under-night-in-birth-exe-late-cl-r.jpg)<br>UNDER NIGHT IN-BIRTH Exe:Late[cl-r]<br><sub>`v0.2.0` · update 1.0.3 · 60 fps</sub> | ![UNDER NIGHT IN-BIRTH II Sys:Celes](docs/images/under-night-in-birth-ii-sys-celes.jpg)<br>UNDER NIGHT IN-BIRTH II Sys:Celes<br><sub>`v0.2.0` · update 1.42 · 60 fps</sub> |
-| ![Unicorn Overlord](docs/images/unicorn-overlord.jpg)<br>Unicorn Overlord<br><sub>`v0.1.3` · update 1.05 · 60 fps · **boots**: saving and a full battle not tested yet</sub> | ![Unpacking](docs/images/unpacking.jpg)<br>Unpacking<br><sub>`v0.1.2` · update 2.01 · 60 fps · played by touch</sub> |
-| ![Untitled Goose Game](docs/images/untitled-goose-game.jpg)<br>Untitled Goose Game<br><sub>`v0.4.0` · update 1.1.2 · 60 fps</sub> | ![Viractal: Will You Trust Your Party?](docs/images/viractal.jpg)<br>Viractal: Will You Trust Your Party?<br><sub>`v0.1.0` · update 1.4.5</sub> |
-| ![Xenoblade Chronicles 3](docs/images/xenoblade-chronicles-3.jpg)<br>Xenoblade Chronicles 3<br><sub>`v0.1.0` · update 2.2.0 · 30 fps · **work in progress**: some effects and models don't draw yet</sub> | ![Xenoblade Chronicles: Definitive Edition](docs/images/xenoblade-chronicles-definitive-edition.jpg)<br>Xenoblade Chronicles: Definitive Edition<br><sub>`v0.4.0` · update 2.0.0 · 30 fps · tested on the AYN Odin 2 with a Turnip driver · **tested to Colony 9**, the pause menu and saving: later maps not checked yet · the scene drops to 896x504 in heavy fights · rarely crashes at boot (restart)</sub> |
+## Quick start (on this device)
 
-The tag (`v0.1.3`) is the latest nx2android version the game was tested on. Older games are not tested again for each release: if a later version breaks one, a patch release fixes it. A tag newer than the [latest release](https://github.com/shirai91/nx2android/releases/latest) is the next release, and the game needs the development checkout until it ships.
+```sh
+# The shell and the device audit (gcc + SDL3; no Android tooling):
+python3 nxnative/dm/alarm/build.py --target shell
+./build/alarm/nx2alarm version
+./build/alarm/nx2alarm doctor
+./build/alarm/nx2alarm shell --headless
+./build/alarm/nx2alarm shell --frames 2 --screenshot /tmp/nx2alarm.ppm
 
-A game that is not in this table is not supported yet. The games we look at next, and the ones done: [docs/PORT_CHECKLIST.md](docs/PORT_CHECKLIST.md).
+# The host core, compiled natively for aarch64 Linux (null graphics backend):
+python3 nxnative/dm/alarm/build_host.py
+./build/alarm/nx2alarm-host          # prints the upstream usage: a game build dir is required
+```
 
-## For players: port a game without programming
+Requirements for M1: Arch Linux ARM, gcc (16 works), SDL3 (`sdl3`), pkg-config, Python 3.
+For real play (M2/M3) you also need a Vulkan ICD for Adreno 630 (e.g. `vulkan-freedreno` from
+the Arch Linux ARM repos, checked with `vulkaninfo`) and the game data you own.
 
-1. Download `nx2android-<version>-windows-x64.zip` (Windows), `nx2android-<version>-macos-arm64.zip` (Mac with Apple silicon), `nx2android-<version>-linux-x64.zip` (Linux on a PC) or `nx2android-<version>-linux-arm64.zip` (Linux on ARM) from [Releases](https://github.com/shirai91/nx2android/releases/latest), unzip it and start **nx2android** (on a Mac, see [packaging/INSTALL.md](packaging/INSTALL.md#1-start-the-app) first).
-2. **Setup** tab: click **Download missing tools** (the Android NDK, the .NET SDK and platform-tools, about 1 GB, from Google and Microsoft), then set your **prod.keys**. Every line turns green.
-3. **Port** tab: choose the folder with the game's NSP, XCI, NSZ or XCZ files (base game, update, DLC) and click **Port**.
-4. Tick **Install on the device when done** with the device plugged in and USB debugging on, or copy the APK and the data folder yourself.
+## Why "ALARM"?
 
-Pokémon Legends: Arceus and Pokémon Legends: Z-A need the device during the port, even without **Install on the device when done**: their shaders are in Oodle-compressed archives, which the port decodes with the game's own decoder on the device. Have platform-tools (adb) from step 2, and plug in the device with USB debugging on before you click **Port**.
+*Arch Linux ARM* is commonly abbreviated **ALARM**; `nx2alarm` is the counterpart of
+`nx2android` for that platform.
 
-A game played by touch: tick **Touch game** on the Port tab (`--touch`). The on-screen gamepad then starts hidden and every touch but one on the menu button goes to the game; the pause menu shows the gamepad again.
+## What the port reuses
 
-Chinese or Korean text drawn as `???`: choose a TrueType font with those characters as **System font** on the Port tab (`--shared-font`, a single `.ttf`, not a `.ttc`). It goes in the data pack; the tool ships none. The tool's own text entry panel shows those characters in its title and the game's initial text, but its keyboard types only ASCII.
+The port is deliberate about what it keeps and what it replaces:
 
-A game that reads system data from the console's firmware (`sysdata` in its profile; Mario Kart 8 Deluxe builds its Mii heads from MiiModel, title 0100000000000802) needs your console's own system content files, which the tool cannot ship. Copy them (`.nca`, for example NAND SYSTEM `Contents/registered` in DBI's MTP mode) to a folder on the PC and give it with `--firmware <folder>` (or `porter config firmware <folder>` once). Without it the host's empty stand-in is used.
+| Kept from nx2android | Replaced for Linux |
+|---|---|
+| Guest loader (arm64 NSO/NRO), Horizon HLE (`dm/host`), NVN layer and texture decoders (`dm/gfx`), rewriter and shader tools, game profiles, third-party libraries | Android NativeActivity/JNI/ANativeWindow front end → SDL3; AAudio → SDL3 audio; MediaCodec movies → V4L2 Venus / ffmpeg (M3+); AHardwareBuffer pools → dma-buf heaps or copy fallback; NDK build → gcc; APK/data pack → Linux app dir |
 
-A game whose profile lists the shared font titles (`0100000000000811` and `0100000000000810`) needs the same `--firmware` folder for its text and button icons; without it the host uses Android's own font and generated icons, and a game that needs a glyph those lack can fail at start. `--shared-font <ttf>` still wins for the standard font.
+Details and a file-by-file map: [`docs/ALARM_ARCHITECTURE.md`](docs/ALARM_ARCHITECTURE.md).
 
-A game slowed by its draw calls in busy scenes: tick **Multithread replay** on the Port tab (`--mt-replay`). The game's Vulkan commands are then recorded on a thread of their own. It stays on until you port the game again without it.
+## Repository layout
 
-When **Show gamepad** is enabled, using a controller hides the on-screen controls. Touch the screen to bring them back. The draggable menu button stays available even with **Show gamepad** off.
+```
+nxnative/dm/            the engine (fork of nxnative)
+  dm/alarm/             NEW: the Arch Linux ARM platform layer (shell, doctor, build scripts,
+                        native platform backends, Vulkan surface glue)
+  dm/host/, dm/gfx/     reused host core (Horizon HLE, NVN, textures)
+  dm/android/           the Android runtime (kept working; source of the port)
+  dm/games/             game profiles
+porter/, gui/           the porting pipeline and desktop GUI (Android target unchanged)
+docs/                   upstream docs + nx2alarm docs (ALARM_PORT, ALARM_ARCHITECTURE,
+                        PORTING_PLAN, FEASIBILITY)
+```
 
-To arrange the on-screen controls, open the pause menu's **Gamepad** tab and choose **Edit layout**: drag a control to move it, pinch or use **− / +** to resize it. **Save** keeps the layout for the next launch and **Cancel** discards your edits. **Snap to grid** (off at first, and remembered) shows a square grid and snaps each control's center to it as you drag.
+## Licensing, keys and game files
 
-A controller whose A is the bottom button (Xbox labels, most Android devices' built-in controls) can have its face buttons follow their labels: the **Gamepad** tab's **Face buttons** row switches between **Position** (the Switch's layout, the default) and **Label**. It applies at once, also to the pause menu's own A and B, and each device keeps its own choice.
+- nx2alarm is **MIT**, as nx2native/nx2android are: see [`LICENSE`](LICENSE)
+  (MIT, © 2026 seedds) and [`nxnative/LICENSE`](nxnative/LICENSE). Third-party code keeps its
+  own license (Ryujinx, zstd, libvpx, Vulkan headers, fonts, …).
+- Like nx2android, this repository contains **no keys, no game files, and nothing extracted
+  from them**. You need your own dumped `prod.keys` and your own game files; the tool never
+  downloads or ships them. Do not share the keys or ports built from them.
+- Not affiliated with Nintendo. Whether decrypting your own games for your own use is allowed
+  depends on where you live.
 
-For Android's Unicode keyboard, port with `--native-keyboard`. It supports composed text, non-Latin scripts and emoji through the system IME, preserves initial text, and applies the guest's UTF-16 length limits. This option requires `javac` and an Android SDK with platform and build-tools (`ANDROID_HOME`). The default APK keeps the existing controller keyboard and does not require Java build tools. Combine `--external-display --native-keyboard` to opt into the native keyboard on an external-screen port; external display alone keeps the controller keyboard. The combined mode still needs runtime qualification over the full-screen phone gamepad.
+## Credits
 
-For the experimental external-screen controller, port from the command line with `--external-display`. The game moves to a connected display and the phone shows the gamepad. In the pause menu's **Game → Audio output**, choose the phone, a connected output, or the system default; the list updates as devices connect or disconnect. Bluetooth call-only routes are omitted; the system may not honor the requested device. This option requires `javac` and an Android SDK with a platform and build-tools (`ANDROID_HOME`). Android 12 or newer uses the saved native layout; Android 10–11 use the fallback controller. Support varies by device and game.
-
-Already have the game on the device for an emulator? The app can read the game's files (its RomFS, most of its size) from that dump's folder instead of a second copy: type the dump's RomFS folder in the app's **RomFS on the device** field (or give it to `--romfs-at`) before you install, which must be the same game version as the port. [packaging/INSTALL.md](packaging/INSTALL.md#the-game-is-already-on-the-device) says how.
-
-A game that crashes with "AllocateAddressRegion … refused (0x1803)" in its log needs more address space: port it again with a larger **Extra address space** on the Port tab (`--alias-headroom` on the command line). [packaging/INSTALL.md](packaging/INSTALL.md#when-something-goes-wrong) says more.
-
-The step-by-step guide is [packaging/INSTALL.md](packaging/INSTALL.md). You need your own game files and `prod.keys`, dumped from your own Switch; the tool never ships or downloads either. NSZ and XCZ files are decompressed during the port (into the build folder's `tmp/`, deleted once extracted).
-
-## Saves
-
-The game's pause menu (Game tab) has **Export save** and **Import save**: an export is a folder in `Android/data/<package>/files/saves/` on the device, the save's files as a console's save tools copy them, so a save from a console imports the same way. The app's **Saves** tab moves them between the device and the PC.
-
-An import replaces the save the game has; the app exports that one first on the device (a folder ending `-before-import`). Uninstalling the app deletes its saves and its exports: copy them to the PC first.
-
-## For developers
-
-Running from the repository, the command line, the repository layout, building the bundle, tests and commit messages: [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md). How it is put together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## Keys and game files
-
-nx2android decrypts your game files with your `prod.keys` while it ports them, as Switch emulators do. This repository and its releases contain no keys, no game files and nothing extracted from them, and the tool never downloads either. Dump both from your own Switch, and don't share them or the APKs and data packs built from them.
-
-Nintendo's takedown notices so far have gone to whoever hosts a project (13 Switch emulator repositories on GitHub in February 2026), not to players. Whether decrypting your own games for your own use is allowed depends on where you live.
-
-## License
-
-MIT, as nxnative (see `nxnative/LICENSE`). Third-party code keeps its own license.
+- [nx2android](https://github.com/shirai91/nx2android) (MIT) — the Android port this project
+  forks; engine, pipeline, profiles and docs.
+- [nxnative](https://github.com/seedds/nxnative) (MIT) — the original ntnative host engine
+  for Apple devices.
+- [Ryujinx](https://github.com/Ryujinx/Ryujinx) (MIT) — shader translator and common code.
+- The upstream `README` for nx2android is preserved at
+  [`docs/UPSTREAM_README_nx2android.md`](docs/UPSTREAM_README_nx2android.md); the upstream
+  architecture and development docs remain in `docs/`.
